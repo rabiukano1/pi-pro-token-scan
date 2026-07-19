@@ -46,3 +46,4 @@ no build command needed.
 npx esbuild node_modules/qrcode/lib/browser.js \
   --bundle --minify --format=iife --global-name=QRCode --outfile=web/qrcode.js
 ```
+"# pi-pro-token-scan" 

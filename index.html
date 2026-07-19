@@ -23,6 +23,14 @@
   .sub { color:var(--muted); font-size:12px; letter-spacing:3px; font-weight:600; }
   .desc { color:#b5aacd; font-size:13px; line-height:1.55; margin-top:14px; }
   label { display:block; color:var(--gold); font-size:13px; font-weight:700; margin:18px 0 6px; }
+  .seg { display:flex; gap:8px; background:var(--card); border:1.5px solid var(--line); border-radius:14px; padding:5px; }
+  .seg button {
+    flex:1; margin:0; padding:11px; border-radius:10px; font-size:14px; font-weight:700;
+    background:transparent; color:var(--muted); border:none; cursor:pointer;
+  }
+  .seg button[aria-pressed="true"] { background:var(--gold); color:var(--bg); }
+  .seg button:hover { filter:none; color:#fff; }
+  .seg button[aria-pressed="true"]:hover { color:var(--bg); }
   input {
     width:100%; padding:13px 14px; font-size:14px; color:#fff;
     background:var(--card); border:1.5px solid var(--line); border-radius:14px;
@@ -74,7 +82,13 @@
     </p>
   </header>
 
-  <label for="name">Wallet owner name</label>
+  <label>QR type</label>
+  <div class="seg" role="group" aria-label="QR type">
+    <button id="tabMerchant" aria-pressed="true">Merchant</button>
+    <button id="tabMember" aria-pressed="false">Member</button>
+  </div>
+
+  <label for="name" id="nameLabel">Merchant / wallet owner name</label>
   <input id="name" placeholder="e.g. Aminu" autocomplete="off">
 
   <label for="wallet">Your wallet address</label>
@@ -93,11 +107,8 @@
     <div class="brand"><img src="pipro-logo.png" alt=""><span>PIPRO</span></div>
     <div class="qrbox"><canvas id="qr"></canvas></div>
     <div id="owner"></div>
-    <div class="badge">&#10003; Authorized Merchant by PIPRO</div>
-    <p class="note">
-      Scan with your Solana wallet to send verified PIPRO tokens safely —
-      no fakes, no wrong addresses.
-    </p>
+    <div class="badge" id="badge"></div>
+    <p class="note" id="note"></p>
   </div>
   <button class="alt" id="dl" style="display:none">Download QR image</button>
 </div>
@@ -114,9 +125,41 @@ function buildUrl(recipient, label, amount) {
          '&label=' + encodeURIComponent(label.trim());
 }
 
+// Merchant and member QRs pay out identically — only the wording differs.
+// A member must never be labelled an authorized merchant.
+const TYPES = {
+  merchant: {
+    nameLabel: 'Merchant / wallet owner name',
+    badge: '✓ Authorized Merchant by PIPRO',
+    note: 'Scan with your Solana wallet to send verified PIPRO tokens safely — ' +
+          'no fakes, no wrong addresses.',
+    file: 'pipro-merchant-qr.png',
+  },
+  member: {
+    nameLabel: 'Member name',
+    badge: '✓ PIPRO Community Member',
+    note: 'Scan with your Solana wallet to send this member PIPRO tokens safely — ' +
+          'no fakes, no wrong addresses.',
+    file: 'pipro-member-qr.png',
+  },
+};
+let qrType = 'merchant';
+
 document.getElementById('mintText').textContent = PIPRO_MINT;
 
 const $ = id => document.getElementById(id);
+
+function setType(t) {
+  qrType = t;
+  $('tabMerchant').setAttribute('aria-pressed', String(t === 'merchant'));
+  $('tabMember').setAttribute('aria-pressed', String(t === 'member'));
+  $('nameLabel').textContent = TYPES[t].nameLabel;
+  // Regenerating is the caller's job; hide any stale card so the badge on
+  // screen always matches the selected type.
+  $('card').style.display = $('dl').style.display = 'none';
+}
+$('tabMerchant').onclick = () => setType('merchant');
+$('tabMember').onclick = () => setType('member');
 
 $('go').onclick = () => {
   const err = $('err'), card = $('card'), dl = $('dl');
@@ -142,6 +185,8 @@ $('go').onclick = () => {
   QRCode.toCanvas($('qr'), url, { width: 230, margin: 1, errorCorrectionLevel: 'H' }, e => {
     if (e) { err.textContent = 'Could not render QR.'; return; }
     $('owner').textContent = name.trim();
+    $('badge').textContent = TYPES[qrType].badge;
+    $('note').textContent = TYPES[qrType].note;
     card.style.display = 'block';
     dl.style.display = 'block';
   });
@@ -149,7 +194,7 @@ $('go').onclick = () => {
 
 $('dl').onclick = () => {
   const a = document.createElement('a');
-  a.download = 'pipro-qr.png';
+  a.download = TYPES[qrType].file;
   a.href = $('qr').toDataURL('image/png');
   a.click();
 };

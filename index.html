@@ -42,9 +42,12 @@
     background:var(--card); border:1.5px solid var(--gold); border-radius:14px;
   }
   .locked span:first-child {
-    flex:1; color:var(--gold); font-size:13px; font-weight:600;
+    /* min-width:0 is required or the 44-char address refuses to shrink and
+       pushes the whole page into horizontal overflow. */
+    flex:1; min-width:0; color:var(--gold); font-size:13px; font-weight:600;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
+  .locked span:last-child { flex:none; }
   .locked span:last-child { color:var(--muted); font-size:11px; font-weight:700; }
   button {
     width:100%; padding:16px; margin-top:24px; font-size:15px; font-weight:800;
@@ -97,7 +100,8 @@
     <button id="tabMember" aria-pressed="false">Member</button>
   </div>
 
-  <label for="name" id="nameLabel">Merchant / wallet owner name</label>
+  <!-- Text is set from TYPES on load so the spelling lives in exactly one place. -->
+  <label for="name" id="nameLabel"></label>
   <input id="name" placeholder="e.g. Aminu" autocomplete="off">
 
   <label for="wallet">Your wallet address</label>
@@ -171,6 +175,7 @@ function setType(t) {
 }
 $('tabMerchant').onclick = () => setType('merchant');
 $('tabMember').onclick = () => setType('member');
+setType('merchant'); // seed the label from TYPES rather than duplicating it in HTML
 
 $('go').onclick = () => {
   const err = $('err'), card = $('card'), dl = $('dl');

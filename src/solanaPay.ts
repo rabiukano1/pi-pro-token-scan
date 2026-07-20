@@ -12,32 +12,27 @@ export interface PayFields {
 // this token, so senders can't be tricked into a different one.
 export const PIPRO_MINT = '7hU4hrLtr2dxGDBy56HQo6NF2u19FA1k4rM8nJQ5ceFk';
 
-// ⚠ TEST TOKEN — devnet only, NOT real PIPRO.
-// Present so the flow can be exercised without holding real tokens. It is
-// deliberately never reported as a verified PIPRO card; scanning it shows a
-// test warning instead. Set to null before sharing the APK with the community.
-// ponytail: hardcoded test mint, swap for a build flag if testing outlives this
-export const TEST_MINT: string | null =
-  '8wy5Jff7KxNDAGSRcFyZQEYMhL8FWi5rh9jU51tkBLLd';
+// Testing done — set to null so scanning a test-mint QR is treated as an
+// ordinary wrong-token card instead of a recognized test card.
+export const TEST_MINT: string | null = null;
 
 // https:// landing page that redirects into whichever wallet is installed.
 // Sending the raw "solana:" link as chat text doesn't work — WhatsApp/Telegram
 // only auto-link http(s), so a custom scheme just sits there as dead text.
 // This page IS a real link (tappable everywhere) and hands off to any wallet
 // that registers for "solana:" — not locked to one wallet's own link format.
-export const PAY_BASE_URL = 'https://rabiukano1.github.io/pi-pro-token-scan/pay.html';
+export const PAY_BASE_URL = 'https://rabiukano1.github.io/pi-pro-token-scan/p.html';
 
-// mint is deliberately not a parameter: the page only ever picks between its
-// own two hardcoded mints (real or test) via the boolean `test` flag below —
-// never an arbitrary one from the URL.
+// mint is deliberately not a parameter: the page always uses the locked
+// PIPRO_MINT, so a shared link can't be edited to redirect payment to a
+// different token.
 // Query string built by hand, not URLSearchParams — Hermes doesn't have a
 // working implementation (see parseUrl below for the same constraint).
 export function buildWebLink({
   recipient,
   label,
   amount,
-  test,
-}: Omit<PayFields, 'mint'> & {test?: boolean}): string {
+}: Omit<PayFields, 'mint'>): string {
   if (!isBase58Address(recipient)) {
     throw new Error('Invalid wallet address');
   }
@@ -47,9 +42,6 @@ export function buildWebLink({
   }
   if (amount) {
     qs += `&amount=${amount}`;
-  }
-  if (test) {
-    qs += '&test=1';
   }
   return `${PAY_BASE_URL}?${qs}`;
 }

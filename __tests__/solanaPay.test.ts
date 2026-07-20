@@ -9,7 +9,6 @@ import {
   PAY_BASE_URL,
   PIPRO_MINT,
   QR_TYPES,
-  TEST_MINT,
 } from '../src/solanaPay';
 
 const WALLET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -90,16 +89,7 @@ describe('buildWebLink', () => {
   });
 
   it('points at the real deployed pay page', () => {
-    expect(PAY_BASE_URL).toBe('https://rabiukano1.github.io/pi-pro-token-scan/pay.html');
-  });
-
-  it('omits test=1 by default', () => {
-    expect(buildWebLink({recipient: WALLET, label: ''})).not.toContain('test=');
-  });
-
-  it('adds test=1 when test cards are being shared', () => {
-    expect(buildWebLink({recipient: WALLET, label: '', test: true}))
-      .toContain('test=1');
+    expect(PAY_BASE_URL).toBe('https://rabiukano1.github.io/pi-pro-token-scan/p.html');
   });
 });
 
@@ -137,20 +127,6 @@ describe('checkCard — fake card detection', () => {
     'not a qr at all',
   ])('rejects %s', raw => {
     expect(checkCard(raw).status).toBe('invalid');
-  });
-
-  it('flags the devnet test token as test, never as verified PIPRO', () => {
-    if (!TEST_MINT) {
-      return; // test mint removed for production — nothing to check
-    }
-    const url = `solana:${WALLET}?spl-token=${TEST_MINT}&label=Tester`;
-    const r = checkCard(url);
-    expect(r.status).toBe('test-token');
-    expect(r.status).not.toBe('valid');
-  });
-
-  it('never lets the test token masquerade as the real mint', () => {
-    expect(TEST_MINT).not.toBe(PIPRO_MINT);
   });
 
   it('distinguishes a fake card from an unreadable one', () => {

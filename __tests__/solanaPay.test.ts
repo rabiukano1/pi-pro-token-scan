@@ -92,6 +92,15 @@ describe('buildWebLink', () => {
   it('points at the real deployed pay page', () => {
     expect(PAY_BASE_URL).toBe('https://rabiukano1.github.io/pi-pro-token-scan/pay.html');
   });
+
+  it('omits test=1 by default', () => {
+    expect(buildWebLink({recipient: WALLET, label: ''})).not.toContain('test=');
+  });
+
+  it('adds test=1 when test cards are being shared', () => {
+    expect(buildWebLink({recipient: WALLET, label: '', test: true}))
+      .toContain('test=1');
+  });
 });
 
 describe('checkCard — fake card detection', () => {

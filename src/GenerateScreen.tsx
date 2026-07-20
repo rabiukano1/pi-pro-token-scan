@@ -93,7 +93,12 @@ export default function GenerateScreen({
       // don't auto-link custom schemes, so the old raw link just sat there
       // as dead text. This page is tappable and hands off to any wallet.
       await Share.open({
-        message: buildWebLink({recipient: wallet.trim(), label: name, amount}),
+        message: buildWebLink({
+          recipient: wallet.trim(),
+          label: name,
+          amount,
+          test: useTest,
+        }),
       });
     } catch {}
   };
@@ -231,16 +236,9 @@ export default function GenerateScreen({
           <TouchableOpacity style={styles.button} onPress={shareImage}>
             <Text style={styles.buttonText}>Share QR image</Text>
           </TouchableOpacity>
-          {useTest ? (
-            <Text style={styles.testNote}>
-              Web link isn't available for test cards — it always points to
-              real PIPRO. Use Share QR image or Copy address instead.
-            </Text>
-          ) : (
-            <TouchableOpacity style={styles.buttonAlt} onPress={shareLink}>
-              <Text style={styles.buttonAltText}>Share link</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity style={styles.buttonAlt} onPress={shareLink}>
+            <Text style={styles.buttonAltText}>Share link</Text>
+          </TouchableOpacity>
           {/* Works with any wallet: no scanner, no "solana:" link support
               needed — the sender pastes these into their wallet's Send screen. */}
           <View style={styles.copyRow}>
@@ -343,13 +341,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   copyBtnText: {color: '#9a8db5', fontSize: 13, fontWeight: '700'},
-  testNote: {
-    color: '#e07a2f',
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: 'center',
-    marginTop: 10,
-  },
   lockedBadge: {color: '#9a8db5', fontSize: 11, fontWeight: '700', marginLeft: 8},
   result: {alignItems: 'stretch', marginTop: 20},
   qrCard: {

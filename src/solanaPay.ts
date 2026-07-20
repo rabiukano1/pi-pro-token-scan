@@ -27,15 +27,17 @@ export const TEST_MINT: string | null =
 // that registers for "solana:" — not locked to one wallet's own link format.
 export const PAY_BASE_URL = 'https://rabiukano1.github.io/pi-pro-token-scan/pay.html';
 
-// mint is deliberately not a parameter: the page always uses PIPRO_MINT, so a
-// shared link can't be edited to redirect payment to a different token.
+// mint is deliberately not a parameter: the page only ever picks between its
+// own two hardcoded mints (real or test) via the boolean `test` flag below —
+// never an arbitrary one from the URL.
 // Query string built by hand, not URLSearchParams — Hermes doesn't have a
 // working implementation (see parseUrl below for the same constraint).
 export function buildWebLink({
   recipient,
   label,
   amount,
-}: Omit<PayFields, 'mint'>): string {
+  test,
+}: Omit<PayFields, 'mint'> & {test?: boolean}): string {
   if (!isBase58Address(recipient)) {
     throw new Error('Invalid wallet address');
   }
@@ -45,6 +47,9 @@ export function buildWebLink({
   }
   if (amount) {
     qs += `&amount=${amount}`;
+  }
+  if (test) {
+    qs += '&test=1';
   }
   return `${PAY_BASE_URL}?${qs}`;
 }

@@ -62,12 +62,20 @@
 // Same locked mint as the app and the QR generator — never taken from the
 // URL, so a shared link can't be edited to redirect payment to another token.
 const PIPRO_MINT = '7hU4hrLtr2dxGDBy56HQo6NF2u19FA1k4rM8nJQ5ceFk';
+// ⚠ TEST TOKEN — devnet only, mirrors src/solanaPay.ts TEST_MINT. Keep both
+// in sync; strip this and the ?test=1 handling below together if the app's
+// TEST_MINT is ever removed for production.
+const TEST_MINT = '8wy5Jff7KxNDAGSRcFyZQEYMhL8FWi5rh9jU51tkBLLd';
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 const qs = new URLSearchParams(location.search);
 const to = (qs.get('to') || '').trim();
 const amount = (qs.get('amount') || '').trim();
 const label = (qs.get('label') || '').trim();
+// test is a boolean switch, not a value from the URL — it can only ever pick
+// between the two mints hardcoded above, never inject an arbitrary one.
+const isTest = qs.get('test') === '1';
+const mint = isTest ? TEST_MINT : PIPRO_MINT;
 
 const content = document.getElementById('content');
 const toast = document.getElementById('toast');
@@ -87,21 +95,26 @@ if (!BASE58.test(to)) {
   content.innerHTML = '<div id="err">This payment link is missing or has an invalid wallet address.</div>';
 } else {
   const amountOk = !amount || /^\d+(\.\d+)?$/.test(amount);
-  const solanaUri = 'solana:' + to + '?spl-token=' + PIPRO_MINT +
+  const solanaUri = 'solana:' + to + '?spl-token=' + mint +
     (amountOk && amount ? '&amount=' + amount : '') +
     '&label=' + encodeURIComponent(label);
   const short = to.slice(0, 6) + '…' + to.slice(-6);
 
   content.innerHTML = `
-    <div class="card">
+    ${isTest ? `
+    <div class="row" style="background:#e07a2f22;border:1.5px solid #e07a2f;border-radius:12px;padding:12px 14px;margin-bottom:14px">
+      <div style="color:#e07a2f;font-weight:800;font-size:13px">🧪 TEST CARD — NOT REAL PIPRO</div>
+      <div style="color:#e07a2f;font-size:12px;margin-top:4px">Devnet only. Switch your wallet to Devnet first.</div>
+    </div>` : ''}
+    <div class="card" ${isTest ? 'style="border-color:#e07a2f"' : ''}>
       ${label ? `<div class="row"><div class="k">TO</div><div class="v">${label}</div></div>` : ''}
       <div class="row">
         <div class="k">WALLET ADDRESS</div>
         <div class="v addr">${short}</div>
       </div>
-      ${amountOk && amount ? `<div class="row"><div class="k">AMOUNT</div><div class="v">${amount} PIPRO</div></div>` : ''}
+      ${amountOk && amount ? `<div class="row"><div class="k">AMOUNT</div><div class="v">${amount} ${isTest ? 'TEST' : 'PIPRO'}</div></div>` : ''}
     </div>
-    <button id="openBtn">Open in Solana Wallet</button>
+    <button id="openBtn" ${isTest ? 'style="background:#e07a2f"' : ''}>Open in Solana Wallet</button>
     <p style="color:var(--muted);font-size:12px;margin-top:10px">
       Works with Phantom, Solflare, and any wallet that supports Solana Pay.
     </p>
@@ -120,7 +133,7 @@ if (!BASE58.test(to)) {
       </div>
     </div>
 
-    <div class="mint">PIPRO token contract: ${PIPRO_MINT}</div>
+    <div class="mint">${isTest ? 'TEST token contract (devnet)' : 'PIPRO token contract'}: ${mint}</div>
   `;
 
   // A real click/tap is required — browsers block auto-redirects to custom

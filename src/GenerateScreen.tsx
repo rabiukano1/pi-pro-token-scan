@@ -12,14 +12,17 @@ import {
 import QRCode from 'react-native-qrcode-svg';
 import ViewShot from 'react-native-view-shot';
 import Share from 'react-native-share';
+import Clipboard from '@react-native-clipboard/clipboard';
 import {
   ASSOCIATION,
   buildUrl,
+  buildWebLink,
   isBase58Address,
   MOTTO,
   PIPRO_MINT,
   QR_TYPES,
   QrType,
+  TEST_MINT,
 } from './solanaPay';
 
 const logo = require('./assets/pipro-logo.png');
@@ -40,9 +43,12 @@ export default function GenerateScreen({
   const [wallet, setWallet] = useState(initialWallet ?? '');
   const [amount, setAmount] = useState(initialAmount ?? '');
   const [qrType, setQrType] = useState<QrType>('marchant');
+  const [useTest, setUseTest] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const shotRef = useRef<React.ComponentRef<typeof ViewShot>>(null);
   const type = QR_TYPES[qrType];
+  // Test switch only exists while TEST_MINT is set; it vanishes in production.
+  const activeMint = useTest && TEST_MINT ? TEST_MINT : PIPRO_MINT;
 
   // Switching type clears the card so the badge on screen always matches the
   // selected type — a member must never see a marchant badge.
@@ -63,7 +69,7 @@ export default function GenerateScreen({
     setUrl(
       buildUrl({
         recipient: wallet.trim(),
-        mint: PIPRO_MINT,
+        mint: activeMint,
         label: name,
         amount: amount.trim() || undefined,
       }),
@@ -83,8 +89,25 @@ export default function GenerateScreen({
 
   const shareLink = async () => {
     try {
-      await Share.open({message: url!});
+      // A real https:// link, not the raw "solana:" text — WhatsApp/Telegram
+      // don't auto-link custom schemes, so the old raw link just sat there
+      // as dead text. This page is tappable and hands off to any wallet.
+      await Share.open({
+        message: buildWebLink({recipient: wallet.trim(), label: name, amount}),
+      });
     } catch {}
+  };
+
+  // Fallback for wallets that can't scan a saved image and chat apps that
+  // don't make a "solana:" link tappable: paste-in works everywhere.
+  const copyAddress = () => {
+    Clipboard.setString(wallet.trim());
+    Alert.alert('Address copied');
+  };
+
+  const copyAmount = () => {
+    Clipboard.setString(amount.trim());
+    Alert.alert('Amount copied');
   };
 
   return (
@@ -133,13 +156,34 @@ export default function GenerateScreen({
         placeholder="Leave empty to let sender choose"
         placeholderTextColor="#6c6285"
       />
-      <Text style={styles.label}>PIPRO token contract (mint)</Text>
-      <View style={styles.lockedField}>
-        <Text style={styles.lockedText} numberOfLines={1} ellipsizeMode="middle">
-          {PIPRO_MINT}
+      <Text style={styles.label}>
+        {useTest ? 'TEST token contract (devnet)' : 'PIPRO token contract (mint)'}
+      </Text>
+      <View style={[styles.lockedField, useTest && styles.lockedFieldTest]}>
+        <Text
+          style={[styles.lockedText, useTest && styles.lockedTextTest]}
+          numberOfLines={1}
+          ellipsizeMode="middle">
+          {activeMint}
         </Text>
-        <Text style={styles.lockedBadge}>🔒 Locked</Text>
+        <Text style={styles.lockedBadge}>{useTest ? '🧪 TEST' : '🔒 Locked'}</Text>
       </View>
+
+      {!!TEST_MINT && (
+        <TouchableOpacity
+          style={styles.testRow}
+          onPress={() => {
+            setUseTest(!useTest);
+            setUrl(null); // stale card would show the other token's QR
+          }}>
+          <View style={[styles.checkbox, useTest && styles.checkboxOn]}>
+            {useTest && <Text style={styles.checkmark}>✓</Text>}
+          </View>
+          <Text style={styles.testLabel}>
+            Use devnet TEST token (not real PIPRO)
+          </Text>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity style={styles.button} onPress={generate}>
         <Text style={styles.buttonText}>Generate QR</Text>
       </TouchableOpacity>
@@ -173,17 +217,42 @@ export default function GenerateScreen({
               />
             </View>
             {!!name.trim() && <Text style={styles.owner}>{name.trim()}</Text>}
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{type.badge}</Text>
+            <View style={[styles.badge, useTest && styles.badgeTest]}>
+              <Text style={styles.badgeText}>
+                {useTest ? '🧪 TEST CARD — NOT REAL PIPRO' : type.badge}
+              </Text>
             </View>
-            <Text style={styles.cardMessage}>{type.note}</Text>
+            <Text style={styles.cardMessage}>
+              {useTest
+                ? 'Devnet test card for testing only. Holds no value.'
+                : type.note}
+            </Text>
           </ViewShot>
           <TouchableOpacity style={styles.button} onPress={shareImage}>
             <Text style={styles.buttonText}>Share QR image</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.buttonAlt} onPress={shareLink}>
-            <Text style={styles.buttonAltText}>Share link</Text>
-          </TouchableOpacity>
+          {useTest ? (
+            <Text style={styles.testNote}>
+              Web link isn't available for test cards — it always points to
+              real PIPRO. Use Share QR image or Copy address instead.
+            </Text>
+          ) : (
+            <TouchableOpacity style={styles.buttonAlt} onPress={shareLink}>
+              <Text style={styles.buttonAltText}>Share link</Text>
+            </TouchableOpacity>
+          )}
+          {/* Works with any wallet: no scanner, no "solana:" link support
+              needed — the sender pastes these into their wallet's Send screen. */}
+          <View style={styles.copyRow}>
+            <TouchableOpacity style={styles.copyBtn} onPress={copyAddress}>
+              <Text style={styles.copyBtnText}>📋 Copy address</Text>
+            </TouchableOpacity>
+            {!!amount.trim() && (
+              <TouchableOpacity style={styles.copyBtn} onPress={copyAmount}>
+                <Text style={styles.copyBtnText}>📋 Copy amount</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       )}
     </ScrollView>
@@ -246,7 +315,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  lockedFieldTest: {borderColor: '#e07a2f'},
   lockedText: {flex: 1, color: GOLD, fontSize: 13, fontWeight: '600'},
+  lockedTextTest: {color: '#e07a2f'},
+  testRow: {flexDirection: 'row', alignItems: 'center', marginTop: 12},
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#e07a2f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  checkboxOn: {backgroundColor: '#e07a2f'},
+  checkmark: {color: '#0d0b14', fontSize: 14, fontWeight: '900'},
+  testLabel: {color: '#e07a2f', fontSize: 13, fontWeight: '700', flex: 1},
+  badgeTest: {backgroundColor: '#e07a2f'},
+  copyRow: {flexDirection: 'row', gap: 10, marginTop: 10},
+  copyBtn: {
+    flex: 1,
+    borderColor: '#2c2440',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  copyBtnText: {color: '#9a8db5', fontSize: 13, fontWeight: '700'},
+  testNote: {
+    color: '#e07a2f',
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    marginTop: 10,
+  },
   lockedBadge: {color: '#9a8db5', fontSize: 11, fontWeight: '700', marginLeft: 8},
   result: {alignItems: 'stretch', marginTop: 20},
   qrCard: {

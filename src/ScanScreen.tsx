@@ -14,7 +14,8 @@ import {
 } from 'react-native-vision-camera';
 import {launchImageLibrary} from 'react-native-image-picker';
 import BarcodeScanning from '@react-native-ml-kit/barcode-scanning';
-import {parseUrl} from './solanaPay';
+import Share from 'react-native-share';
+import {checkCard} from './solanaPay';
 
 const GOLD = '#d4a437';
 
@@ -29,26 +30,71 @@ export default function ScanScreen() {
     );
   }, []);
 
+  const release = () => {
+    busy.current = false;
+  };
+
+  const openWallet = async (url: string, recipient: string) => {
+    try {
+      // Hands off to Phantom/Solflare with the transfer pre-filled.
+      // A sender without the token cannot complete it — the wallet blocks it.
+      await Linking.openURL(url.trim());
+    } catch {
+      // No wallet installed (or Android hid it). Let them pass the address on
+      // instead of hitting a dead end.
+      Alert.alert(
+        'No Solana wallet found',
+        'Install Phantom or Solflare, or send yourself this address:\n\n' +
+          recipient,
+        [
+          {text: 'Close', style: 'cancel'},
+          {
+            text: 'Share address',
+            onPress: () => Share.open({message: recipient}).catch(() => {}),
+          },
+        ],
+      );
+    }
+    release();
+  };
+
   const handleCode = async (value?: string) => {
     if (busy.current || !value) {
       return;
     }
     busy.current = true;
-    const fields = parseUrl(value);
-    if (!fields) {
-      Alert.alert('Not a valid token QR', undefined, [
-        {text: 'OK', onPress: () => (busy.current = false)},
+    const result = checkCard(value);
+
+    if (result.status === 'invalid') {
+      Alert.alert('Not a PIPRO card', 'This QR is not a PIPRO payment card.', [
+        {text: 'OK', onPress: release},
       ]);
       return;
     }
-    try {
-      // Hands off to Phantom/Solflare with the transfer pre-filled.
-      // A sender without the token cannot complete it — the wallet blocks it.
-      await Linking.openURL(value.trim());
-    } catch {
-      Alert.alert('No Solana wallet app installed');
+    // Wrong token = the exact fake-card case this app exists to catch.
+    if (result.status === 'wrong-token') {
+      Alert.alert(
+        '⚠ NOT an official PIPRO card',
+        'This QR sends a different token, not PIPRO. Do not use it.\n\nToken in QR:\n' +
+          result.mint,
+        [{text: 'OK', onPress: release}],
+      );
+      return;
     }
-    busy.current = false;
+
+    // Confirm who is being paid before handing off to the wallet.
+    const {recipient, label} = result.fields;
+    const isTest = result.status === 'test-token';
+    Alert.alert(
+      isTest ? '🧪 TEST TOKEN — not real PIPRO' : '✓ Verified PIPRO card',
+      (isTest ? 'Devnet test token. Switch your wallet to Devnet.\n\n' : '') +
+        (label ? label + '\n\n' : '') +
+        recipient.slice(0, 6) + '...' + recipient.slice(-6),
+      [
+        {text: 'Cancel', style: 'cancel', onPress: release},
+        {text: 'Open wallet', onPress: () => openWallet(value, recipient)},
+      ],
+    );
   };
 
   const codeScanner = useCodeScanner({

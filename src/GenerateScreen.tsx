@@ -1,6 +1,7 @@
 import React, {useRef, useState} from 'react';
 import {
   Alert,
+  Clipboard,
   Image,
   ScrollView,
   StyleSheet,
@@ -23,6 +24,7 @@ import {
   QrType,
 } from './solanaPay';
 import AdBanner from './components/AdBanner';
+import {useInterstitialAd} from './hooks/useInterstitialAd';
 
 const logo = require('./assets/pipro-logo.png');
 const GOLD = '#d4a437';
@@ -47,12 +49,25 @@ export default function GenerateScreen({
   const [isCheckingBalance, setIsCheckingBalance] = useState(false);
   const shotRef = useRef<React.ComponentRef<typeof ViewShot>>(null);
   const type = QR_TYPES[qrType];
+  const {showInterstitialIfAvailable, isLoaded} = useInterstitialAd();
 
   // Switching type clears the card so the badge on screen always matches the
   // selected type — a member must never see a marchant badge.
   const pickType = (t: QrType) => {
     setQrType(t);
     setUrl(null);
+  };
+
+  const pasteFromClipboard = async () => {
+    try {
+      const text = await Clipboard.getString();
+      if (text) {
+        setWallet(text.trim());
+        setBalance(null);
+      }
+    } catch {
+      // ignore clipboard read failure
+    }
   };
 
   const checkBalance = async () => {
@@ -107,14 +122,6 @@ export default function GenerateScreen({
   };
 
   const generate = () => {
-    if (!isBase58Address(wallet.trim())) {
-      Alert.alert('Invalid wallet address');
-      return;
-    }
-    if (amount.trim() && !/^\d+(\.\d+)?$/.test(amount.trim())) {
-      Alert.alert('Amount must be a number');
-      return;
-    }
     setUrl(
       buildUrl({
         recipient: wallet.trim(),
@@ -123,6 +130,24 @@ export default function GenerateScreen({
         amount: amount.trim() || undefined,
       }),
     );
+  };
+
+  const handleGeneratePress = () => {
+    if (!isBase58Address(wallet.trim())) {
+      Alert.alert('Invalid wallet address');
+      return;
+    }
+    if (amount.trim() && !/^\d+(\.\d+)?$/.test(amount.trim())) {
+      Alert.alert('Amount must be a number');
+      return;
+    }
+    
+    // Generate QR immediately
+    generate();
+
+    // Show Interstitial ad
+    console.log('GenerateScreen: Generate pressed. Interstitial isLoaded =', isLoaded);
+    showInterstitialIfAvailable();
   };
 
   const shareImage = async () => {
@@ -184,18 +209,35 @@ export default function GenerateScreen({
           </TouchableOpacity>
         )}
       </View>
-      <TextInput
-        style={styles.input}
-        value={wallet}
-        onChangeText={text => {
-          setWallet(text);
-          setBalance(null);
-        }}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="Receiver wallet address"
-        placeholderTextColor="#6c6285"
-      />
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={[styles.input, {paddingRight: 64, marginTop: 0}]}
+          value={wallet}
+          onChangeText={text => {
+            setWallet(text);
+            setBalance(null);
+          }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Receiver wallet address"
+          placeholderTextColor="#6c6285"
+        />
+        {wallet.length > 0 ? (
+          <TouchableOpacity
+            style={styles.clearBtn}
+            onPress={() => {
+              setWallet('');
+              setBalance(null);
+            }}
+          >
+            <Text style={styles.clearBtnText}>✕</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.pasteBtn} onPress={pasteFromClipboard}>
+            <Text style={styles.pasteBtnText}>Paste</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       {balance !== null && (
         <Text style={styles.balanceDisplay}>Balance: {balance} PIPRO</Text>
       )}
@@ -216,7 +258,7 @@ export default function GenerateScreen({
         <Text style={styles.lockedBadge}>🔒 Locked</Text>
       </View>
 
-      <TouchableOpacity style={styles.button} onPress={generate}>
+      <TouchableOpacity style={styles.button} onPress={handleGeneratePress}>
         <Text style={styles.buttonText}>Generate QR</Text>
       </TouchableOpacity>
 
@@ -320,6 +362,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
+  },
+  inputContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  pasteBtn: {
+    position: 'absolute',
+    right: 10,
+    backgroundColor: '#2d2448',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  pasteBtnText: {
+    color: GOLD,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  clearBtn: {
+    position: 'absolute',
+    right: 12,
+    padding: 6,
+  },
+  clearBtnText: {
+    color: '#9a8db5',
+    fontSize: 16,
+    fontWeight: '700',
   },
   button: {
     backgroundColor: GOLD,

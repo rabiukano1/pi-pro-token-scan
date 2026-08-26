@@ -1,8 +1,8 @@
 {
-  "name": "SolanaTokenQR",
-  "displayName": "SolanaTokenQR",
+  "name": " PIPRO QR",
+  "displayName": "PIPRO QR",
   "react-native-google-mobile-ads": {
-    "android_app_id": "ca-app-pub-3940256099942544~3347511713",
+    "android_app_id": "ca-app-pub-5278018921408798~9321203192",
     "ios_app_id": "ca-app-pub-3940256099942544~1458002511"
   }
 }

@@ -64,6 +64,7 @@ export default function ScanScreen() {
       return;
     }
     busy.current = true;
+    
     const result = checkCard(value);
 
     if (result.status === 'invalid') {

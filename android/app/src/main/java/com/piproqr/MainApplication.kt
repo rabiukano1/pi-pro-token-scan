@@ -1,4 +1,4 @@
-package com.solanatokenqr
+package com.piproqr
 
 import android.app.Application
 import com.facebook.react.PackageList

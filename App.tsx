@@ -12,15 +12,30 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import GenerateScreen from './src/GenerateScreen';
 import ScanScreen from './src/ScanScreen';
+import BalanceScreen from './src/BalanceScreen';
+import AdBanner from './src/components/AdBanner';
+import mobileAds from 'react-native-google-mobile-ads';
 import { parseDeepLink, DeepLink } from './src/solanaPay';
 
 const logo = require('./src/assets/pipro-logo.png');
 
-type Screen = 'home' | 'generate' | 'scan';
+type Screen = 'home' | 'generate' | 'scan' | 'balance';
 
 function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [link, setLink] = useState<DeepLink | null>(null);
+
+  // Initialize AdMob SDK on startup
+  useEffect(() => {
+    mobileAds()
+      .initialize()
+      .then(adapterStatuses => {
+        console.log('MobileAds initialized:', adapterStatuses);
+      })
+      .catch(err => {
+        console.log('MobileAds init warning:', err);
+      });
+  }, []);
 
   // Another app can open us at a screen with fields pre-filled:
   //   pipro://generate?wallet=<address>&name=<label>&amount=<number>
@@ -77,7 +92,14 @@ function App() {
             >
               <Text style={styles.secondaryBtnText}>Scan QR</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.tertiaryBtn}
+              onPress={() => setScreen('balance')}
+            >
+              <Text style={styles.tertiaryBtnText}>💰 Check Token Balance</Text>
+            </TouchableOpacity>
           </View>
+          <AdBanner />
         </SafeAreaView>
       </SafeAreaProvider>
     );
@@ -96,7 +118,11 @@ function App() {
             <Text style={styles.backText}>‹ Back</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>
-            {screen === 'generate' ? 'Generate QR' : 'Scan QR'}
+            {screen === 'generate'
+              ? 'Generate QR'
+              : screen === 'scan'
+              ? 'Scan QR'
+              : 'Check Balance'}
           </Text>
           <Image source={logo} style={styles.headerLogo} />
         </View>
@@ -106,8 +132,15 @@ function App() {
             initialName={link?.name}
             initialAmount={link?.amount}
           />
-        ) : (
+        ) : screen === 'scan' ? (
           <ScanScreen />
+        ) : (
+          <BalanceScreen
+            onNavigateToGenerate={walletAddress => {
+              setLink({ screen: 'generate', wallet: walletAddress });
+              setScreen('generate');
+            }}
+          />
         )}
       </SafeAreaView>
     </SafeAreaProvider>
@@ -163,6 +196,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   secondaryBtnText: { color: GOLD, fontSize: 16, fontWeight: '700' },
+  tertiaryBtn: {
+    backgroundColor: '#1a142c',
+    borderWidth: 1,
+    borderColor: '#392d5c',
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+  },
+  tertiaryBtnText: { color: '#c7bfe6', fontSize: 15, fontWeight: '700' },
 
   container: { flex: 1, backgroundColor: '#fff' },
   header: {

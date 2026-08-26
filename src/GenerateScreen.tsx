@@ -22,6 +22,7 @@ import {
   QR_TYPES,
   QrType,
 } from './solanaPay';
+import AdBanner from './components/AdBanner';
 
 const logo = require('./assets/pipro-logo.png');
 const GOLD = '#d4a437';
@@ -42,6 +43,8 @@ export default function GenerateScreen({
   const [amount, setAmount] = useState(initialAmount ?? '');
   const [qrType, setQrType] = useState<QrType>('marchant');
   const [url, setUrl] = useState<string | null>(null);
+  const [balance, setBalance] = useState<string | null>(null);
+  const [isCheckingBalance, setIsCheckingBalance] = useState(false);
   const shotRef = useRef<React.ComponentRef<typeof ViewShot>>(null);
   const type = QR_TYPES[qrType];
 
@@ -50,6 +53,57 @@ export default function GenerateScreen({
   const pickType = (t: QrType) => {
     setQrType(t);
     setUrl(null);
+  };
+
+  const checkBalance = async () => {
+    if (!isBase58Address(wallet.trim())) {
+      Alert.alert('Invalid wallet address');
+      return;
+    }
+    setIsCheckingBalance(true);
+    setBalance(null);
+    try {
+      const response = await fetch('https://api.mainnet-beta.solana.com', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTokenAccountsByOwner',
+          params: [
+            wallet.trim(),
+            {mint: PIPRO_MINT},
+            {encoding: 'jsonParsed'},
+          ],
+        }),
+      });
+      const data = await response.json();
+      if (data.error) {
+        Alert.alert('Error', data.error.message || 'Failed to fetch balance');
+      } else {
+        const accounts = data.result.value;
+        if (!accounts || accounts.length === 0) {
+          setBalance('0');
+        } else {
+          let total = 0;
+          let decimals = 0;
+          for (const acc of accounts) {
+            const tokenAmount = acc.account.data.parsed.info.tokenAmount;
+            total += Number(tokenAmount.amount);
+            decimals = tokenAmount.decimals;
+          }
+          const formatted = (total / Math.pow(10, decimals)).toLocaleString(undefined, {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: decimals,
+          });
+          setBalance(formatted);
+        }
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Network error while checking balance');
+    } finally {
+      setIsCheckingBalance(false);
+    }
   };
 
   const generate = () => {
@@ -120,16 +174,31 @@ export default function GenerateScreen({
         placeholder="e.g. Aminu"
         placeholderTextColor="#6c6285"
       />
-      <Text style={styles.label}>Your wallet address</Text>
+      <View style={styles.labelRow}>
+        <Text style={styles.labelRowText}>Your wallet address</Text>
+        {wallet.trim().length > 0 && (
+          <TouchableOpacity onPress={checkBalance} disabled={isCheckingBalance}>
+            <Text style={styles.checkBalanceText}>
+              {isCheckingBalance ? 'Checking...' : 'Check Balance'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
       <TextInput
         style={styles.input}
         value={wallet}
-        onChangeText={setWallet}
+        onChangeText={text => {
+          setWallet(text);
+          setBalance(null);
+        }}
         autoCapitalize="none"
         autoCorrect={false}
         placeholder="Receiver wallet address"
         placeholderTextColor="#6c6285"
       />
+      {balance !== null && (
+        <Text style={styles.balanceDisplay}>Balance: {balance} PIPRO</Text>
+      )}
       <Text style={styles.label}>Amount (optional)</Text>
       <TextInput
         style={styles.input}
@@ -193,6 +262,7 @@ export default function GenerateScreen({
           </TouchableOpacity>
         </View>
       )}
+      <AdBanner />
     </ScrollView>
   );
 }
@@ -207,6 +277,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
     letterSpacing: 0.5,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 6,
+  },
+  labelRowText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: GOLD,
+    letterSpacing: 0.5,
+  },
+  checkBalanceText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#b5aacd',
+  },
+  balanceDisplay: {
+    color: '#4ade80',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 6,
+    marginLeft: 4,
   },
   label: {
     fontSize: 13,

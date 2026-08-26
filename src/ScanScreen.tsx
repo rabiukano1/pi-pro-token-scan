@@ -16,6 +16,7 @@ import {launchImageLibrary} from 'react-native-image-picker';
 import BarcodeScanning from '@react-native-ml-kit/barcode-scanning';
 import Share from 'react-native-share';
 import {checkCard} from './solanaPay';
+import AdBanner from './components/AdBanner';
 
 const GOLD = '#d4a437';
 
@@ -144,6 +145,7 @@ export default function ScanScreen() {
       <TouchableOpacity style={styles.button} onPress={pickImage}>
         <Text style={styles.buttonText}>Open shared QR image</Text>
       </TouchableOpacity>
+      <AdBanner />
     </View>
   );
 }

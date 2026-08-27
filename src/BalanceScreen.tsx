@@ -20,9 +20,18 @@ const GOLD = '#d4a437';
 
 interface LastReceivedInfo {
   amount: string;
+  beforeAmount: string;
+  afterAmount: string;
   timeFormatted: string;
   timeRelative: string;
   signature?: string;
+}
+
+function formatAmount(n: number, decimals: number): string {
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
 }
 
 interface BalanceScreenProps {
@@ -135,7 +144,8 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
             total += Number(tokenAmount.amount);
             decimals = tokenAmount.decimals;
           }
-          const formatted = (total / Math.pow(10, decimals)).toLocaleString(undefined, {
+          const currentUi = total / Math.pow(10, decimals);
+          const formatted = currentUi.toLocaleString(undefined, {
             minimumFractionDigits: 0,
             maximumFractionDigits: decimals,
           });
@@ -233,10 +243,9 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
                     : {timeFormatted: 'Recently confirmed', timeRelative: 'Recent'};
 
                   setLastReceived({
-                    amount: receivedAmountNumber.toLocaleString(undefined, {
-                      minimumFractionDigits: 0,
-                      maximumFractionDigits: decimals,
-                    }),
+                    amount: formatAmount(receivedAmountNumber, decimals),
+                    beforeAmount: formatAmount(currentUi - receivedAmountNumber, decimals),
+                    afterAmount: formatAmount(currentUi, decimals),
                     timeFormatted,
                     timeRelative,
                     signature: sigInfo.signature,
@@ -365,10 +374,24 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
 
                 {lastReceived ? (
                   <View style={styles.receivedBody}>
+                    <View style={styles.beforeAfterRow}>
+                      <Text style={styles.beforeAfterLabel}>Before</Text>
+                      <Text style={styles.beforeAfterValue}>
+                        {lastReceived.beforeAmount}{' '}
+                        <Text style={styles.receivedUnit}>PIPRO</Text>
+                      </Text>
+                    </View>
                     <Text style={styles.receivedAmount}>
                       +{lastReceived.amount}{' '}
                       <Text style={styles.receivedUnit}>PIPRO</Text>
                     </Text>
+                    <View style={styles.beforeAfterRow}>
+                      <Text style={styles.beforeAfterLabel}>After</Text>
+                      <Text style={styles.beforeAfterValue}>
+                        {lastReceived.afterAmount}{' '}
+                        <Text style={styles.receivedUnit}>PIPRO</Text>
+                      </Text>
+                    </View>
                     <Text style={styles.receivedTime}>
                       🕒 {lastReceived.timeFormatted}
                     </Text>
@@ -602,6 +625,21 @@ const styles = StyleSheet.create({
   },
   receivedBody: {
     gap: 4,
+  },
+  beforeAfterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  beforeAfterLabel: {
+    color: '#7dd3fc',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  beforeAfterValue: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    fontWeight: '600',
   },
   receivedAmount: {
     color: '#4ade80',

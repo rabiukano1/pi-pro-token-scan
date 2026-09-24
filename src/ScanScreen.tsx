@@ -15,7 +15,7 @@ import {
 import {launchImageLibrary} from 'react-native-image-picker';
 import BarcodeScanning from '@react-native-ml-kit/barcode-scanning';
 import Share from 'react-native-share';
-import {checkCard} from './solanaPay';
+import {buildUrl, checkCard} from './solanaPay';
 import AdBanner from './components/AdBanner';
 
 const GOLD = '#d4a437';
@@ -37,15 +37,16 @@ export default function ScanScreen() {
 
   const openWallet = async (url: string, recipient: string) => {
     try {
-      // Hands off to Phantom/Solflare with the transfer pre-filled.
-      // A sender without the token cannot complete it — the wallet blocks it.
+      // Hands off to whichever wallet the chooser picks, transfer pre-filled.
+      // Jupiter, Phantom and Solflare all register the solana: scheme, so all
+      // three appear; a sender without the token cannot complete it anyway.
       await Linking.openURL(url.trim());
     } catch {
       // No wallet installed (or Android hid it). Let them pass the address on
       // instead of hitting a dead end.
       Alert.alert(
         'No Solana wallet found',
-        'Install Phantom or Solflare, or send yourself this address:\n\n' +
+        'Install Jupiter, Phantom or Solflare, or send yourself this address:\n\n' +
           recipient,
         [
           {text: 'Close', style: 'cancel'},
@@ -87,14 +88,29 @@ export default function ScanScreen() {
     // Confirm who is being paid before handing off to the wallet.
     const {recipient, label} = result.fields;
     const isTest = result.status === 'test-token';
+    // A bare address pins no token, so the QR itself proves nothing about
+    // which token will be sent — say so instead of showing a verified badge.
+    const isBareAddress = result.status === 'address';
     Alert.alert(
-      isTest ? '🧪 TEST TOKEN — not real PIPRO' : '✓ Verified PIPRO card',
+      isTest
+        ? '🧪 TEST TOKEN — not real PIPRO'
+        : isBareAddress
+        ? '⚠ Address only — token not locked'
+        : '✓ Verified PIPRO card',
       (isTest ? 'Devnet test token. Switch your wallet to Devnet.\n\n' : '') +
+        (isBareAddress
+          ? 'This QR holds a wallet address only. Your wallet will NOT ' +
+            'preselect PIPRO — choose it yourself before sending.\n\n'
+          : '') +
         (label ? label + '\n\n' : '') +
         recipient.slice(0, 6) + '...' + recipient.slice(-6),
       [
         {text: 'Cancel', style: 'cancel', onPress: release},
-        {text: 'Open wallet', onPress: () => openWallet(value, recipient)},
+        {
+          text: 'Open wallet',
+          onPress: () =>
+            openWallet(isBareAddress ? buildUrl(result.fields) : value, recipient),
+        },
       ],
     );
   };

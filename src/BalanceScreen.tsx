@@ -12,11 +12,29 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {PIPRO_MINT, isBase58Address} from './solanaPay';
+import {
+  PIPRO_MINT,
+  buildTxHistory,
+  filterTransfers,
+  isBase58Address,
+} from './solanaPay';
+import type {TxFilter} from './solanaPay';
 import AdBanner from './components/AdBanner';
+import DatePickerModal from './components/DatePickerModal';
+import {C, GOLD, toISODate} from './theme';
 import {useInterstitialAd} from './hooks/useInterstitialAd';
 
-const GOLD = '#d4a437';
+const RPC_URL = 'https://api.mainnet-beta.solana.com';
+// ponytail: the date filter sifts this window client-side rather than paging
+// the RPC. Raise it or page with `before` if people need older history.
+const TX_HISTORY_LIMIT = 50;
+
+const TX_FILTERS: {key: TxFilter; label: string}[] = [
+  {key: 'all', label: 'All'},
+  {key: 'in', label: '↓ Received'},
+  {key: 'out', label: '↑ Sent'},
+];
+
 
 interface LastReceivedInfo {
   amount: string;
@@ -26,6 +44,13 @@ interface LastReceivedInfo {
   timeRelative: string;
   signature?: string;
 }
+
+interface TxItem extends LastReceivedInfo {
+  direction: 'in' | 'out';
+  delta: number; // signed, in UI units — positive is received
+  blockTime: number | null;
+}
+
 
 function formatAmount(n: number, decimals: number): string {
   return n.toLocaleString(undefined, {
@@ -76,9 +101,43 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
   const [wallet, setWallet] = useState('');
   const [balance, setBalance] = useState<string | null>(null);
   const [lastReceived, setLastReceived] = useState<LastReceivedInfo | null>(null);
+  const [transactions, setTransactions] = useState<TxItem[]>([]);
+  const [showAllTx, setShowAllTx] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [picking, setPicking] = useState<'from' | 'to' | null>(null);
+  const [txFilter, setTxFilter] = useState<TxFilter>('all');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [hasChecked, setHasChecked] = useState(false);
   const {showInterstitialIfAvailable} = useInterstitialAd();
+
+  const resetFilters = () => {
+    setTxFilter('all');
+    setFromDate('');
+    setToDate('');
+  };
+
+  const todayISO = toISODate(new Date());
+  const isToday = fromDate === todayISO && toDate === todayISO;
+
+  // Picking a start after the end (or an end before the start) can only ever
+  // return nothing, so the other bound gives way instead of going empty.
+  const pickDate = (iso: string) => {
+    if (picking === 'from') {
+      setFromDate(iso);
+      if (toDate && iso > toDate) {
+        setToDate('');
+      }
+    } else if (picking === 'to') {
+      setToDate(iso);
+      if (fromDate && iso < fromDate) {
+        setFromDate('');
+      }
+    }
+    setShowAllTx(false);
+    setPicking(null);
+  };
 
   const pasteFromClipboard = async () => {
     try {
@@ -106,6 +165,9 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
     setIsLoading(true);
     setBalance(null);
     setLastReceived(null);
+    setTransactions([]);
+    setShowAllTx(false);
+    resetFilters();
     setHasChecked(false);
 
     // Trigger full-screen Interstitial Ad
@@ -113,7 +175,7 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
 
     try {
       // 1. Query Token Accounts for PIPRO
-      const response = await fetch('https://api.mainnet-beta.solana.com', {
+      const response = await fetch(RPC_URL, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -151,107 +213,73 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
           });
           setBalance(formatted);
 
-          // 2. Fetch Transaction Signatures for the Token Account
+          // 2. Fetch recent PIPRO transfer history for this token account
           const ataPubkey = accounts[0].pubkey;
           try {
-            const sigResponse = await fetch('https://api.mainnet-beta.solana.com', {
+            const sigResponse = await fetch(RPC_URL, {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({
                 jsonrpc: '2.0',
                 id: 2,
                 method: 'getSignaturesForAddress',
-                params: [ataPubkey, {limit: 5}],
+                params: [ataPubkey, {limit: TX_HISTORY_LIMIT}],
               }),
             });
             const sigData = await sigResponse.json();
-            const signatures = sigData.result;
+            const signatures: any[] = (sigData.result || []).filter((sig: any) => !sig.err);
 
-            if (signatures && signatures.length > 0) {
-              // Inspect top recent transactions to find the last received transfer
-              for (const sigInfo of signatures) {
-                if (sigInfo.err) continue; // Skip failed transactions
-
-                const txResponse = await fetch('https://api.mainnet-beta.solana.com', {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({
+            if (signatures.length > 0) {
+              // One batched JSON-RPC call instead of N round trips — the public
+              // mainnet RPC rate-limits per request, not per transaction.
+              const txResponse = await fetch(RPC_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(
+                  signatures.map((sig: any, i: number) => ({
                     jsonrpc: '2.0',
-                    id: 3,
+                    id: i,
                     method: 'getTransaction',
                     params: [
-                      sigInfo.signature,
-                      {
-                        encoding: 'jsonParsed',
-                        maxSupportedTransactionVersion: 0,
-                      },
+                      sig.signature,
+                      {encoding: 'jsonParsed', maxSupportedTransactionVersion: 0},
                     ],
-                  }),
-                });
+                  })),
+                ),
+              });
+              const txBatch = await txResponse.json();
 
-                const txData = await txResponse.json();
-                const tx = txData.result;
-                if (!tx || !tx.meta) continue;
+              // Batch responses may come back out of order — index them by id
+              const byId = new Map<number, any>();
+              for (const entry of Array.isArray(txBatch) ? txBatch : []) {
+                byId.set(entry.id, entry.result);
+              }
 
-                // Check pre vs post token balances for this account / owner
-                const preList = tx.meta.preTokenBalances || [];
-                const postList = tx.meta.postTokenBalances || [];
+              const history: TxItem[] = buildTxHistory(
+                signatures,
+                signatures.map((_: any, i: number) => byId.get(i)),
+                trimmed,
+                PIPRO_MINT,
+                decimals,
+                currentUi,
+              ).map(item => ({
+                signature: item.signature,
+                direction: item.delta > 0 ? ('in' as const) : ('out' as const),
+                amount: formatAmount(Math.abs(item.delta), decimals),
+                delta: item.delta,
+                blockTime: item.blockTime,
+                beforeAmount: formatAmount(item.balanceAfter - item.delta, decimals),
+                afterAmount: formatAmount(item.balanceAfter, decimals),
+                ...(item.blockTime
+                  ? formatTimestamp(item.blockTime)
+                  : {timeFormatted: 'Recently confirmed', timeRelative: 'Recent'}),
+              }));
 
-                const pre = preList.find(
-                  (b: any) =>
-                    (b.owner === trimmed || b.mint === PIPRO_MINT) &&
-                    b.mint === PIPRO_MINT,
-                );
-                const post = postList.find(
-                  (b: any) =>
-                    (b.owner === trimmed || b.mint === PIPRO_MINT) &&
-                    b.mint === PIPRO_MINT,
-                );
+              setTransactions(history);
 
-                let receivedAmountNumber = 0;
-                if (post) {
-                  const postAmt = Number(post.uiTokenAmount?.uiAmount || 0);
-                  const preAmt = Number(pre?.uiTokenAmount?.uiAmount || 0);
-                  if (postAmt > preAmt) {
-                    receivedAmountNumber = postAmt - preAmt;
-                  }
-                }
-
-                // If not found in balances, check parsed instructions
-                if (receivedAmountNumber === 0 && tx.transaction?.message?.instructions) {
-                  for (const ix of tx.transaction.message.instructions) {
-                    if (
-                      ix.program === 'spl-token' &&
-                      (ix.parsed?.type === 'transfer' || ix.parsed?.type === 'transferChecked')
-                    ) {
-                      const info = ix.parsed.info;
-                      if (info.destination === ataPubkey || info.wallet === trimmed) {
-                        const amt = info.tokenAmount?.uiAmount || (Number(info.amount) / Math.pow(10, decimals));
-                        if (amt > 0) {
-                          receivedAmountNumber = amt;
-                          break;
-                        }
-                      }
-                    }
-                  }
-                }
-
-                if (receivedAmountNumber > 0) {
-                  const blockTime = tx.blockTime || sigInfo.blockTime;
-                  const {timeFormatted, timeRelative} = blockTime
-                    ? formatTimestamp(blockTime)
-                    : {timeFormatted: 'Recently confirmed', timeRelative: 'Recent'};
-
-                  setLastReceived({
-                    amount: formatAmount(receivedAmountNumber, decimals),
-                    beforeAmount: formatAmount(currentUi - receivedAmountNumber, decimals),
-                    afterAmount: formatAmount(currentUi, decimals),
-                    timeFormatted,
-                    timeRelative,
-                    signature: sigInfo.signature,
-                  });
-                  break; // Found the latest received transfer!
-                }
+              const newestDeposit = history.find(item => item.direction === 'in');
+              if (newestDeposit) {
+                setLastReceived(newestDeposit);
               }
             }
           } catch {
@@ -260,12 +288,16 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
         }
         setHasChecked(true);
       }
-    } catch (err) {
+    } catch {
       Alert.alert('Network Error', 'Unable to connect to Solana mainnet. Please check your internet connection.');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const visibleTx = filterTransfers(transactions, txFilter, fromDate, toDate);
+  const isFiltered =
+    txFilter !== 'all' || fromDate.length > 0 || toDate.length > 0;
 
   const openExplorer = (signature?: string) => {
     if (signature) {
@@ -280,416 +312,654 @@ export default function BalanceScreen({onNavigateToGenerate}: BalanceScreenProps
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
     >
-      <Text style={styles.headerSubtitle}>
-        Check live PIPRO balance & latest incoming transfer from Solana Mainnet.
-      </Text>
+      {/* Verified mint, shown as a chip rather than a full-width card so the
+          wallet input stays the first thing the eye lands on. */}
+      <View style={styles.mintChip}>
+        <View style={styles.dotGreen} />
+        <Text style={styles.mintChipLabel}>VERIFIED PIPRO MINT</Text>
+        <Text
+          style={styles.mintChipValue}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {PIPRO_MINT}
+        </Text>
+      </View>
 
-          {/* Token Contract Info Box */}
-          <View style={styles.tokenCard}>
-            <View style={styles.tokenRow}>
-              <Text style={styles.tokenTitle}>Official PIPRO Mint</Text>
-              <Text style={styles.verifiedBadge}>✓ Verified Token</Text>
-            </View>
-            <Text style={styles.tokenMint} numberOfLines={1} ellipsizeMode="middle">
-              {PIPRO_MINT}
-            </Text>
-          </View>
-
-          {/* Wallet Input Field */}
-          <Text style={styles.label}>PUBLIC WALLET ADDRESS</Text>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
-              placeholderTextColor="#5a5270"
-              value={wallet}
-              onChangeText={text => {
-                setWallet(text);
-                if (hasChecked) {
-                  setHasChecked(false);
-                  setBalance(null);
-                  setLastReceived(null);
-                }
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            {wallet.length > 0 ? (
-              <TouchableOpacity
-                style={styles.clearBtn}
-                onPress={() => {
-                  setWallet('');
-                  setBalance(null);
-                  setLastReceived(null);
-                  setHasChecked(false);
-                }}
-              >
-                <Text style={styles.clearBtnText}>✕</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.pasteBtn} onPress={pasteFromClipboard}>
-                <Text style={styles.pasteBtnText}>Paste</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Check Balance Button */}
+      <Text style={styles.fieldLabel}>WALLET ADDRESS</Text>
+      <View style={[styles.inputShell, isFocused && styles.inputShellFocused]}>
+        <TextInput
+          style={styles.input}
+          placeholder="Paste a Solana address"
+          placeholderTextColor={C.dim}
+          value={wallet}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          onChangeText={text => {
+            setWallet(text);
+            if (hasChecked) {
+              setHasChecked(false);
+              setBalance(null);
+              setLastReceived(null);
+              setTransactions([]);
+              setShowAllTx(false);
+              resetFilters();
+            }
+          }}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {wallet.length > 0 ? (
           <TouchableOpacity
-            style={[styles.button, isLoading && styles.buttonDisabled]}
-            onPress={handleCheckBalance}
-            disabled={isLoading}
+            style={styles.inputAction}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            onPress={() => {
+              setWallet('');
+              setBalance(null);
+              setLastReceived(null);
+              setTransactions([]);
+              setShowAllTx(false);
+              resetFilters();
+              setHasChecked(false);
+            }}
           >
-            {isLoading ? (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator size="small" color="#0d0b14" />
-                <Text style={styles.buttonTextLoading}>Querying Solana Mainnet...</Text>
-              </View>
-            ) : (
-              <Text style={styles.buttonText}>Check Balance & Activity</Text>
-            )}
+            <Text style={styles.inputActionClear}>✕</Text>
           </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.inputAction, styles.pasteBtn]}
+            onPress={pasteFromClipboard}
+          >
+            <Text style={styles.pasteBtnText}>Paste</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
-          {/* Results Box */}
-          {hasChecked && balance !== null && (
-            <View style={styles.resultsWrapper}>
-              {/* Total Balance Card */}
-              <View style={styles.resultCard}>
-                <Text style={styles.resultLabel}>CURRENT PIPRO BALANCE</Text>
-                <Text style={styles.resultAmount}>
-                  {balance} <Text style={styles.resultUnit}>PIPRO</Text>
-                </Text>
-                <Text style={styles.resultSubtext}>
-                  ✓ Live on-chain balance
-                </Text>
-              </View>
+      <TouchableOpacity
+        style={[styles.primaryBtn, isLoading && styles.primaryBtnDisabled]}
+        onPress={handleCheckBalance}
+        disabled={isLoading}
+        activeOpacity={0.85}
+      >
+        {isLoading ? (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color={C.bg} />
+            <Text style={styles.primaryBtnTextLoading}>Reading mainnet…</Text>
+          </View>
+        ) : (
+          <Text style={styles.primaryBtnText}>Check balance</Text>
+        )}
+      </TouchableOpacity>
 
-              {/* Last Received Card */}
-              <View style={styles.receivedCard}>
-                <View style={styles.receivedHeader}>
-                  <Text style={styles.receivedTag}>📥 LAST RECEIVED</Text>
-                  {lastReceived && (
-                    <Text style={styles.receivedRelative}>{lastReceived.timeRelative}</Text>
-                  )}
+      {hasChecked && balance !== null && (
+        <View style={styles.results}>
+          {/* Balance hero */}
+          <View style={styles.heroCard}>
+            <Text style={styles.heroLabel}>TOTAL BALANCE</Text>
+            <View style={styles.heroAmountRow}>
+              <Text
+                style={styles.heroAmount}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.5}
+              >
+                {balance}
+              </Text>
+              <Text style={styles.heroUnit}>PIPRO</Text>
+            </View>
+            <View style={styles.heroFoot}>
+              <View style={styles.dotGreen} />
+              <Text style={styles.heroFootText}>Live on-chain</Text>
+            </View>
+          </View>
+
+          {/* Last received */}
+          <View style={styles.card}>
+            <View style={styles.cardHead}>
+              <Text style={styles.cardTitle}>LAST RECEIVED</Text>
+              {lastReceived && (
+                <View style={styles.pill}>
+                  <Text style={styles.pillText}>{lastReceived.timeRelative}</Text>
                 </View>
-
-                {lastReceived ? (
-                  <View style={styles.receivedBody}>
-                    <View style={styles.beforeAfterRow}>
-                      <Text style={styles.beforeAfterLabel}>Before</Text>
-                      <Text style={styles.beforeAfterValue}>
-                        {lastReceived.beforeAmount}{' '}
-                        <Text style={styles.receivedUnit}>PIPRO</Text>
-                      </Text>
-                    </View>
-                    <Text style={styles.receivedAmount}>
-                      +{lastReceived.amount}{' '}
-                      <Text style={styles.receivedUnit}>PIPRO</Text>
-                    </Text>
-                    <View style={styles.beforeAfterRow}>
-                      <Text style={styles.beforeAfterLabel}>After</Text>
-                      <Text style={styles.beforeAfterValue}>
-                        {lastReceived.afterAmount}{' '}
-                        <Text style={styles.receivedUnit}>PIPRO</Text>
-                      </Text>
-                    </View>
-                    <Text style={styles.receivedTime}>
-                      🕒 {lastReceived.timeFormatted}
-                    </Text>
-
-                    {lastReceived.signature && (
-                      <TouchableOpacity
-                        style={styles.explorerLink}
-                        onPress={() => openExplorer(lastReceived.signature)}
-                      >
-                        <Text style={styles.explorerLinkText}>
-                          View on Solscan ↗
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ) : (
-                  <Text style={styles.noReceivedText}>
-                    No recent incoming transfers found for this address.
-                  </Text>
-                )}
-              </View>
-
-              {onNavigateToGenerate && (
-                <TouchableOpacity
-                  style={styles.actionBtn}
-                  onPress={() => onNavigateToGenerate(wallet.trim())}
-                >
-                  <Text style={styles.actionBtnText}>⚡ Generate QR for this Address</Text>
-                </TouchableOpacity>
               )}
             </View>
-          )}
 
-          {/* AdMob Banner inside scroll flow */}
-          <View style={styles.bannerWrapper}>
-            <AdBanner />
+            {lastReceived ? (
+              <>
+                <Text style={styles.deltaAmount}>
+                  +{lastReceived.amount}
+                  <Text style={styles.deltaUnit}> PIPRO</Text>
+                </Text>
+
+                <View style={styles.ledger}>
+                  <View style={styles.ledgerRow}>
+                    <Text style={styles.ledgerKey}>Before</Text>
+                    <Text style={styles.ledgerVal}>
+                      {lastReceived.beforeAmount}
+                    </Text>
+                  </View>
+                  <View style={styles.ledgerDivider} />
+                  <View style={styles.ledgerRow}>
+                    <Text style={styles.ledgerKey}>After</Text>
+                    <Text style={[styles.ledgerVal, styles.ledgerValStrong]}>
+                      {lastReceived.afterAmount}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.timestamp}>{lastReceived.timeFormatted}</Text>
+
+                {lastReceived.signature && (
+                  <TouchableOpacity
+                    style={styles.linkBtn}
+                    onPress={() => openExplorer(lastReceived.signature)}
+                  >
+                    <Text style={styles.linkBtnText}>View on Solscan ↗</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            ) : (
+              <Text style={styles.emptyText}>
+                No incoming transfers in this wallet’s recent history.
+              </Text>
+            )}
           </View>
-        </ScrollView>
+
+          {/* History */}
+          <View style={styles.card}>
+            <View style={styles.cardHead}>
+              <Text style={styles.cardTitle}>ACTIVITY</Text>
+              <Text style={styles.cardCount}>
+                {isFiltered
+                  ? `${visibleTx.length} of ${transactions.length}`
+                  : `${transactions.length}${
+                      transactions.length === TX_HISTORY_LIMIT ? '+' : ''
+                    }`}
+              </Text>
+            </View>
+
+            {transactions.length > 0 && (
+              <>
+                <View style={styles.segment}>
+                  {TX_FILTERS.map(f => (
+                    <TouchableOpacity
+                      key={f.key}
+                      style={[
+                        styles.segmentBtn,
+                        txFilter === f.key && styles.segmentBtnOn,
+                      ]}
+                      onPress={() => {
+                        setTxFilter(f.key);
+                        setShowAllTx(false);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.segmentText,
+                          txFilter === f.key && styles.segmentTextOn,
+                        ]}
+                      >
+                        {f.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={styles.dateRow}>
+                  <TouchableOpacity
+                    style={styles.dateField}
+                    onPress={() => setPicking('from')}
+                  >
+                    <Text style={styles.dateLabel}>FROM</Text>
+                    <View style={styles.dateBox}>
+                      <Text
+                        style={[
+                          styles.dateValue,
+                          !fromDate && styles.dateValueEmpty,
+                        ]}
+                      >
+                        {fromDate || 'Any'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.dateField}
+                    onPress={() => setPicking('to')}
+                  >
+                    <Text style={styles.dateLabel}>TO</Text>
+                    <View style={styles.dateBox}>
+                      <Text
+                        style={[
+                          styles.dateValue,
+                          !toDate && styles.dateValueEmpty,
+                        ]}
+                      >
+                        {toDate || 'Any'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.todayBtn, isToday && styles.todayBtnOn]}
+                    onPress={() => {
+                      if (isToday) {
+                        setFromDate('');
+                        setToDate('');
+                      } else {
+                        setFromDate(todayISO);
+                        setToDate(todayISO);
+                      }
+                      setShowAllTx(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.todayText,
+                        isToday && styles.todayTextOn,
+                      ]}
+                    >
+                      Today
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isFiltered && (
+                  <TouchableOpacity
+                    style={styles.clearFilterBtn}
+                    onPress={resetFilters}
+                  >
+                    <Text style={styles.clearFilterText}>Clear filters</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
+            {visibleTx.length === 0 ? (
+              <Text style={styles.emptyText}>
+                {transactions.length === 0
+                  ? 'No PIPRO transfers in this wallet’s recent history.'
+                  : 'Nothing matches this filter.'}
+              </Text>
+            ) : (
+              <>
+                {(showAllTx ? visibleTx : visibleTx.slice(0, 5)).map(item => {
+                  const incoming = item.direction === 'in';
+                  return (
+                    <TouchableOpacity
+                      key={item.signature}
+                      style={styles.txRow}
+                      onPress={() => openExplorer(item.signature)}
+                      activeOpacity={0.6}
+                    >
+                      <View
+                        style={[
+                          styles.txIcon,
+                          incoming ? styles.txIconIn : styles.txIconOut,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.txArrow,
+                            incoming ? styles.inText : styles.outText,
+                          ]}
+                        >
+                          {incoming ? '↓' : '↑'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.txBody}>
+                        <Text style={styles.txTitle}>
+                          {incoming ? 'Received' : 'Sent'}
+                        </Text>
+                        <Text style={styles.txTime}>{item.timeFormatted}</Text>
+                      </View>
+
+                      <View style={styles.txTail}>
+                        <Text
+                          style={[
+                            styles.txAmount,
+                            incoming ? styles.inText : styles.outText,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {incoming ? '+' : '−'}
+                          {item.amount}
+                        </Text>
+                        <Text style={styles.txRelative}>{item.timeRelative}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {visibleTx.length > 5 && (
+                  <TouchableOpacity
+                    style={styles.showMoreBtn}
+                    onPress={() => setShowAllTx(!showAllTx)}
+                  >
+                    <Text style={styles.showMoreText}>
+                      {showAllTx ? 'Show less' : `Show all ${visibleTx.length}`}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+
+          {onNavigateToGenerate && (
+            <TouchableOpacity
+              style={styles.secondaryBtn}
+              onPress={() => onNavigateToGenerate(wallet.trim())}
+            >
+              <Text style={styles.secondaryBtnText}>
+                Generate QR for this address
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      <DatePickerModal
+        visible={picking !== null}
+        title={picking === 'from' ? 'START DATE' : 'END DATE'}
+        value={picking === 'from' ? fromDate : toDate}
+        onSelect={pickDate}
+        onClear={() => {
+          if (picking === 'from') {
+            setFromDate('');
+          } else {
+            setToDate('');
+          }
+          setShowAllTx(false);
+          setPicking(null);
+        }}
+        onClose={() => setPicking(null)}
+      />
+
+      <View style={styles.bannerWrapper}>
+        <AdBanner />
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: '#0d0b14',
-  },
-  container: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  bannerWrapper: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    marginTop: 24,
-    marginBottom: 20,
-  },
-  headerSubtitle: {
-    color: '#9a8db5',
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  tokenCard: {
-    backgroundColor: '#161226',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#2d2448',
-  },
-  tokenRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  tokenTitle: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  verifiedBadge: {
-    color: '#4ade80',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  tokenMint: {
-    color: '#9a8db5',
-    fontSize: 11,
-    fontFamily: 'monospace',
-  },
-  label: {
-    color: GOLD,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  inputContainer: {
-    position: 'relative',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  input: {
-    backgroundColor: '#161226',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    paddingRight: 64,
-    color: '#fff',
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#2d2448',
-  },
-  pasteBtn: {
-    position: 'absolute',
-    right: 10,
-    backgroundColor: '#2d2448',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  pasteBtnText: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  clearBtn: {
-    position: 'absolute',
-    right: 12,
-    padding: 6,
-  },
-  clearBtnText: {
-    color: '#9a8db5',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  button: {
-    backgroundColor: GOLD,
-    borderRadius: 14,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  buttonDisabled: {
-    opacity: 0.75,
-  },
-  loadingRow: {
+  screen: {flex: 1, backgroundColor: C.bg},
+  container: {padding: 18, paddingBottom: 36},
+  bannerWrapper: {alignItems: 'center', marginTop: 26, marginBottom: 12},
+
+  dotGreen: {width: 6, height: 6, borderRadius: 3, backgroundColor: C.green},
+
+  mintChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  buttonText: {
-    color: '#0d0b14',
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  buttonTextLoading: {
-    color: '#0d0b14',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  resultsWrapper: {
-    gap: 14,
-    marginTop: 6,
-  },
-  resultCard: {
-    backgroundColor: '#18142a',
-    borderRadius: 16,
-    padding: 18,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: GOLD,
-  },
-  resultLabel: {
-    color: '#9a8db5',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    marginBottom: 6,
-  },
-  resultAmount: {
-    color: '#fff',
-    fontSize: 30,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  resultUnit: {
-    color: GOLD,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  resultSubtext: {
-    color: '#4ade80',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  receivedCard: {
-    backgroundColor: '#141c24',
-    borderRadius: 14,
-    padding: 16,
+    backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: '#1e384d',
-  },
-  receivedHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  receivedTag: {
-    color: '#38bdf8',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  receivedRelative: {
-    color: '#7dd3fc',
-    fontSize: 11,
-    fontWeight: '700',
-    backgroundColor: '#0c283c',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  receivedBody: {
-    gap: 4,
-  },
-  beforeAfterRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  beforeAfterLabel: {
-    color: '#7dd3fc',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  beforeAfterValue: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  receivedAmount: {
-    color: '#4ade80',
-    fontSize: 24,
-    fontWeight: '800',
-  },
-  receivedUnit: {
-    color: '#86efac',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  receivedTime: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  noReceivedText: {
-    color: '#64748b',
-    fontSize: 13,
-    fontStyle: 'italic',
-  },
-  explorerLink: {
-    alignSelf: 'flex-start',
-    marginTop: 10,
-    backgroundColor: '#0c283c',
-    paddingVertical: 8,
+    borderColor: C.borderSoft,
+    borderRadius: 999,
+    paddingVertical: 9,
     paddingHorizontal: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#1e4b6e',
+    marginBottom: 22,
   },
-  explorerLinkText: {
-    color: '#38bdf8',
-    fontSize: 12,
+  mintChipLabel: {
+    color: C.green,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  mintChipValue: {
+    flex: 1,
+    color: C.dim,
+    fontSize: 10,
+    fontFamily: 'monospace',
+    textAlign: 'right',
+  },
+
+  fieldLabel: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    marginBottom: 9,
+  },
+  inputShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    paddingLeft: 16,
+    paddingRight: 8,
+  },
+  inputShellFocused: {borderColor: GOLD},
+  input: {flex: 1, color: C.text, fontSize: 14, paddingVertical: 15},
+  inputAction: {paddingHorizontal: 10, paddingVertical: 8},
+  inputActionClear: {color: C.muted, fontSize: 15, fontWeight: '700'},
+  pasteBtn: {
+    backgroundColor: C.raised,
+    borderRadius: 10,
+    paddingHorizontal: 13,
+  },
+  pasteBtnText: {color: GOLD, fontSize: 12, fontWeight: '800'},
+
+  primaryBtn: {
+    backgroundColor: GOLD,
+    borderRadius: 16,
+    paddingVertical: 17,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  primaryBtnDisabled: {opacity: 0.6},
+  primaryBtnText: {
+    color: C.bg,
+    fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
-  actionBtn: {
-    backgroundColor: '#251e3e',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#433668',
+  primaryBtnTextLoading: {color: C.bg, fontSize: 14, fontWeight: '700'},
+  loadingRow: {flexDirection: 'row', alignItems: 'center', gap: 9},
+
+  results: {gap: 14, marginTop: 22},
+
+  heroCard: {
+    backgroundColor: C.surface,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: GOLD,
+    paddingVertical: 26,
+    paddingHorizontal: 20,
     alignItems: 'center',
+  },
+  heroLabel: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.8,
+  },
+  heroAmountRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginTop: 10,
+    maxWidth: '100%',
+  },
+  heroAmount: {
+    color: C.text,
+    fontSize: 38,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    flexShrink: 1,
+  },
+  heroUnit: {color: GOLD, fontSize: 15, fontWeight: '800', letterSpacing: 0.5},
+  heroFoot: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+  },
+  heroFootText: {color: C.green, fontSize: 11, fontWeight: '700'},
+
+  card: {
+    backgroundColor: C.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    padding: 16,
+  },
+  cardHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cardTitle: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.6,
+  },
+  cardCount: {color: C.dim, fontSize: 11, fontWeight: '700'},
+  pill: {
+    backgroundColor: C.raised,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  pillText: {color: C.muted, fontSize: 10, fontWeight: '700'},
+
+  deltaAmount: {color: C.green, fontSize: 28, fontWeight: '900'},
+  deltaUnit: {color: C.green, fontSize: 14, fontWeight: '700'},
+
+  ledger: {
+    backgroundColor: C.bg,
+    borderRadius: 12,
+    paddingHorizontal: 13,
+    marginTop: 14,
+  },
+  ledgerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  ledgerDivider: {height: 1, backgroundColor: C.borderSoft},
+  ledgerKey: {color: C.dim, fontSize: 12, fontWeight: '600'},
+  ledgerVal: {color: C.muted, fontSize: 13, fontWeight: '700'},
+  ledgerValStrong: {color: C.text},
+  timestamp: {color: C.dim, fontSize: 11, marginTop: 11},
+
+  linkBtn: {alignSelf: 'flex-start', marginTop: 12},
+  linkBtnText: {color: C.blue, fontSize: 12, fontWeight: '800'},
+
+  emptyText: {color: C.dim, fontSize: 12.5, lineHeight: 19, paddingVertical: 4},
+
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: C.bg,
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 9,
+    alignItems: 'center',
+  },
+  segmentBtnOn: {backgroundColor: GOLD},
+  segmentText: {color: C.muted, fontSize: 12, fontWeight: '700'},
+  segmentTextOn: {color: C.bg, fontWeight: '800'},
+
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginTop: 12,
+  },
+  dateField: {flex: 1},
+  dateLabel: {
+    color: C.dim,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 5,
+  },
+  dateBox: {
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 11,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+  },
+  dateValue: {color: C.text, fontSize: 12.5, fontWeight: '700'},
+  dateValueEmpty: {color: C.dim, fontWeight: '600'},
+  todayBtn: {
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderRadius: 11,
+    backgroundColor: C.raised,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  todayBtnOn: {backgroundColor: GOLD, borderColor: GOLD},
+  todayText: {color: C.muted, fontSize: 12, fontWeight: '800'},
+  todayTextOn: {color: C.bg},
+  clearFilterBtn: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: 11,
+    backgroundColor: C.raised,
+    alignItems: 'center',
+  },
+  clearFilterText: {color: GOLD, fontSize: 12, fontWeight: '700'},
+
+  txRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: C.borderSoft,
     marginTop: 4,
   },
-  actionBtnText: {
-    color: GOLD,
-    fontSize: 13,
-    fontWeight: '700',
+  txIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  txIconIn: {backgroundColor: C.greenDim},
+  txIconOut: {backgroundColor: C.redDim},
+  txArrow: {fontSize: 15, fontWeight: '900'},
+  txBody: {flex: 1},
+  txTitle: {color: C.text, fontSize: 13.5, fontWeight: '700'},
+  txTime: {color: C.dim, fontSize: 10.5, marginTop: 2},
+  txTail: {alignItems: 'flex-end', maxWidth: '42%'},
+  txAmount: {fontSize: 14, fontWeight: '800'},
+  txRelative: {color: C.dim, fontSize: 10.5, marginTop: 2},
+  inText: {color: C.green},
+  outText: {color: C.red},
+
+  showMoreBtn: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: C.borderSoft,
+    marginTop: 4,
+  },
+  showMoreText: {color: GOLD, fontSize: 12, fontWeight: '800'},
+
+  secondaryBtn: {
+    backgroundColor: C.raised,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  secondaryBtnText: {color: GOLD, fontSize: 13, fontWeight: '800'},
 });

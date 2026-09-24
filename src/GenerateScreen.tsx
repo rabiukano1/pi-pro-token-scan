@@ -15,19 +15,21 @@ import ViewShot from 'react-native-view-shot';
 import Share from 'react-native-share';
 import {
   ASSOCIATION,
-  buildUrl,
+  buildQrValue,
   buildWebLink,
   isBase58Address,
   MOTTO,
   PIPRO_MINT,
+  QR_MODES,
   QR_TYPES,
+  QrMode,
   QrType,
 } from './solanaPay';
 import AdBanner from './components/AdBanner';
+import {C, GOLD} from './theme';
 import {useInterstitialAd} from './hooks/useInterstitialAd';
 
 const logo = require('./assets/pipro-logo.png');
-const GOLD = '#d4a437';
 
 interface Props {
   initialWallet?: string;
@@ -44,17 +46,27 @@ export default function GenerateScreen({
   const [wallet, setWallet] = useState(initialWallet ?? '');
   const [amount, setAmount] = useState(initialAmount ?? '');
   const [qrType, setQrType] = useState<QrType>('marchant');
+  const [qrMode, setQrMode] = useState<QrMode>('solanapay');
   const [url, setUrl] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
   const [isCheckingBalance, setIsCheckingBalance] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
   const shotRef = useRef<React.ComponentRef<typeof ViewShot>>(null);
   const type = QR_TYPES[qrType];
+  const mode = QR_MODES[qrMode];
   const {showInterstitialIfAvailable, isLoaded} = useInterstitialAd();
 
   // Switching type clears the card so the badge on screen always matches the
   // selected type — a member must never see a marchant badge.
   const pickType = (t: QrType) => {
     setQrType(t);
+    setUrl(null);
+  };
+
+  // The card prints different wording per mode, so a stale card must not
+  // survive the switch — it would claim a token lock the QR no longer carries.
+  const pickMode = (m: QrMode) => {
+    setQrMode(m);
     setUrl(null);
   };
 
@@ -114,7 +126,7 @@ export default function GenerateScreen({
           setBalance(formatted);
         }
       }
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Network error while checking balance');
     } finally {
       setIsCheckingBalance(false);
@@ -123,7 +135,7 @@ export default function GenerateScreen({
 
   const generate = () => {
     setUrl(
-      buildUrl({
+      buildQrValue(qrMode, {
         recipient: wallet.trim(),
         mint: PIPRO_MINT,
         label: name,
@@ -173,93 +185,173 @@ export default function GenerateScreen({
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
-      <Text style={styles.hint}>
-        Create a verified payment QR for your customers
-      </Text>
-      <Text style={styles.label}>QR type</Text>
-      <View style={styles.seg}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.container}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+    >
+      <Text style={styles.sectionLabel}>CARD TYPE</Text>
+      <View style={styles.segment}>
         {(['marchant', 'member'] as QrType[]).map(t => (
           <TouchableOpacity
             key={t}
-            style={[styles.segBtn, qrType === t && styles.segBtnOn]}
-            onPress={() => pickType(t)}>
-            <Text style={[styles.segText, qrType === t && styles.segTextOn]}>
+            style={[styles.segmentBtn, qrType === t && styles.segmentBtnOn]}
+            onPress={() => pickType(t)}
+          >
+            <Text
+              style={[
+                styles.segmentText,
+                qrType === t && styles.segmentTextOn,
+              ]}
+            >
               {QR_TYPES[t].tab}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <Text style={styles.label}>{type.nameLabel}</Text>
-      <TextInput
-        style={styles.input}
-        value={name}
-        onChangeText={setName}
-        placeholder="e.g. Aminu"
-        placeholderTextColor="#6c6285"
-      />
+      <Text style={styles.sectionLabel}>WALLET COMPATIBILITY</Text>
+      <View style={styles.segment}>
+        {(['solanapay', 'universal'] as QrMode[]).map(m => (
+          <TouchableOpacity
+            key={m}
+            style={[styles.segmentBtn, qrMode === m && styles.segmentBtnOn]}
+            onPress={() => pickMode(m)}
+          >
+            <Text
+              style={[
+                styles.segmentText,
+                qrMode === m && styles.segmentTextOn,
+              ]}
+            >
+              {QR_MODES[m].tab}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={styles.blurb}>{mode.blurb}</Text>
+
+      <Text style={styles.sectionLabel}>{type.nameLabel.toUpperCase()}</Text>
+      <View
+        style={[
+          styles.inputShell,
+          focused === 'name' && styles.inputShellFocused,
+        ]}
+      >
+        <TextInput
+          style={styles.input}
+          value={name}
+          onChangeText={setName}
+          onFocus={() => setFocused('name')}
+          onBlur={() => setFocused(null)}
+          placeholder="e.g. Aminu"
+          placeholderTextColor={C.dim}
+        />
+      </View>
+
       <View style={styles.labelRow}>
-        <Text style={styles.labelRowText}>Your wallet address</Text>
+        <Text style={styles.sectionLabelFlush}>WALLET ADDRESS</Text>
         {wallet.trim().length > 0 && (
-          <TouchableOpacity onPress={checkBalance} disabled={isCheckingBalance}>
-            <Text style={styles.checkBalanceText}>
-              {isCheckingBalance ? 'Checking...' : 'Check Balance'}
+          <TouchableOpacity
+            style={styles.miniBtn}
+            onPress={checkBalance}
+            disabled={isCheckingBalance}
+          >
+            <Text style={styles.miniBtnText}>
+              {isCheckingBalance ? 'Checking…' : 'Check balance'}
             </Text>
           </TouchableOpacity>
         )}
       </View>
-      <View style={styles.inputContainer}>
+      <View
+        style={[
+          styles.inputShell,
+          focused === 'wallet' && styles.inputShellFocused,
+        ]}
+      >
         <TextInput
-          style={[styles.input, {paddingRight: 64, marginTop: 0}]}
+          style={styles.input}
           value={wallet}
           onChangeText={text => {
             setWallet(text);
             setBalance(null);
           }}
+          onFocus={() => setFocused('wallet')}
+          onBlur={() => setFocused(null)}
           autoCapitalize="none"
           autoCorrect={false}
           placeholder="Receiver wallet address"
-          placeholderTextColor="#6c6285"
+          placeholderTextColor={C.dim}
         />
         {wallet.length > 0 ? (
           <TouchableOpacity
-            style={styles.clearBtn}
+            style={styles.inputAction}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             onPress={() => {
               setWallet('');
               setBalance(null);
             }}
           >
-            <Text style={styles.clearBtnText}>✕</Text>
+            <Text style={styles.inputActionClear}>✕</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.pasteBtn} onPress={pasteFromClipboard}>
+          <TouchableOpacity
+            style={[styles.inputAction, styles.pasteBtn]}
+            onPress={pasteFromClipboard}
+          >
             <Text style={styles.pasteBtnText}>Paste</Text>
           </TouchableOpacity>
         )}
       </View>
       {balance !== null && (
-        <Text style={styles.balanceDisplay}>Balance: {balance} PIPRO</Text>
+        <View style={styles.balancePill}>
+          <View style={styles.dotGreen} />
+          <Text style={styles.balancePillText}>{balance} PIPRO</Text>
+        </View>
       )}
-      <Text style={styles.label}>Amount (optional)</Text>
-      <TextInput
-        style={styles.input}
-        value={amount}
-        onChangeText={setAmount}
-        keyboardType="decimal-pad"
-        placeholder="Leave empty to let sender choose"
-        placeholderTextColor="#6c6285"
-      />
-      <Text style={styles.label}>PIPRO token contract (mint)</Text>
-      <View style={styles.lockedField}>
-        <Text style={styles.lockedText} numberOfLines={1} ellipsizeMode="middle">
-          {PIPRO_MINT}
-        </Text>
-        <Text style={styles.lockedBadge}>🔒 Locked</Text>
+
+      <Text style={styles.sectionLabel}>AMOUNT (OPTIONAL)</Text>
+      <View
+        style={[
+          styles.inputShell,
+          focused === 'amount' && styles.inputShellFocused,
+        ]}
+      >
+        <TextInput
+          style={styles.input}
+          value={amount}
+          onChangeText={setAmount}
+          onFocus={() => setFocused('amount')}
+          onBlur={() => setFocused(null)}
+          keyboardType="decimal-pad"
+          placeholder="Leave empty to let sender choose"
+          placeholderTextColor={C.dim}
+        />
       </View>
 
-      <TouchableOpacity style={styles.button} onPress={handleGeneratePress}>
-        <Text style={styles.buttonText}>Generate QR</Text>
+      <Text style={styles.sectionLabel}>PIPRO TOKEN CONTRACT</Text>
+      <View style={styles.mintRow}>
+        <Text
+          style={styles.mintValue}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {PIPRO_MINT}
+        </Text>
+        <View style={mode.locked ? styles.lockChip : styles.warnChip}>
+          <Text style={mode.locked ? styles.lockChipText : styles.warnChipText}>
+            {mode.locked ? 'LOCKED' : 'SENDER PICKS'}
+          </Text>
+        </View>
+      </View>
+
+      <TouchableOpacity
+        style={styles.primaryBtn}
+        onPress={handleGeneratePress}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.primaryBtnText}>Generate QR</Text>
       </TouchableOpacity>
 
       {url && (
@@ -267,7 +359,8 @@ export default function GenerateScreen({
           <ViewShot
             ref={shotRef}
             options={{format: 'png', quality: 1}}
-            style={styles.qrCard}>
+            style={styles.qrCard}
+          >
             <View style={styles.cardHeader}>
               <Image source={logo} style={styles.cardLogo} />
               <Text style={styles.cardBrand}>PIPRO</Text>
@@ -279,6 +372,7 @@ export default function GenerateScreen({
             <Text style={styles.motto} numberOfLines={1} adjustsFontSizeToFit>
               {MOTTO}
             </Text>
+
             <View style={styles.qrBox}>
               <QRCode
                 value={url}
@@ -290,193 +384,298 @@ export default function GenerateScreen({
                 logoBorderRadius={23}
               />
             </View>
+
+            {!mode.locked && (
+              <View style={styles.manualBox}>
+                <Text style={styles.manualTitle}>SEND THIS TOKEN ONLY</Text>
+                <Text style={styles.manualToken}>PIPRO</Text>
+                <Text style={styles.manualMint}>{PIPRO_MINT}</Text>
+                {!!amount.trim() && (
+                  <Text style={styles.manualAmount}>
+                    Amount: {amount.trim()} PIPRO
+                  </Text>
+                )}
+              </View>
+            )}
+
             {!!name.trim() && <Text style={styles.owner}>{name.trim()}</Text>}
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{type.badge}</Text>
             </View>
-            <Text style={styles.cardMessage}>{type.note}</Text>
+            <Text style={styles.cardMessage}>
+              {mode.locked
+                ? type.note
+                : 'Scan with any Solana wallet, then choose PIPRO above and ' +
+                  'send. Check the token matches before confirming.'}
+            </Text>
           </ViewShot>
-          <TouchableOpacity style={styles.button} onPress={shareImage}>
-            <Text style={styles.buttonText}>Share QR image</Text>
+
+          <TouchableOpacity style={styles.primaryBtn} onPress={shareImage}>
+            <Text style={styles.primaryBtnText}>Share QR image</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.buttonAlt} onPress={shareLink}>
-            <Text style={styles.buttonAltText}>Share link</Text>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={shareLink}>
+            <Text style={styles.secondaryBtnText}>Share link</Text>
           </TouchableOpacity>
         </View>
       )}
-      <AdBanner />
+
+      <View style={styles.bannerWrapper}>
+        <AdBanner />
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {backgroundColor: '#0d0b14'},
-  container: {padding: 20, paddingBottom: 40},
-  hint: {
-    color: '#9a8db5',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: 8,
-    letterSpacing: 0.5,
+  screen: {flex: 1, backgroundColor: C.bg},
+  container: {padding: 18, paddingBottom: 36},
+  bannerWrapper: {alignItems: 'center', marginTop: 26, marginBottom: 12},
+
+  dotGreen: {width: 6, height: 6, borderRadius: 3, backgroundColor: C.green},
+
+  sectionLabel: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    marginTop: 20,
+    marginBottom: 9,
+  },
+  sectionLabelFlush: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.4,
   },
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 6,
+    marginTop: 20,
+    marginBottom: 9,
   },
-  labelRowText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: GOLD,
-    letterSpacing: 0.5,
-  },
-  checkBalanceText: {
-    fontSize: 12,
+  blurb: {
+    color: C.dim,
+    fontSize: 11,
     fontWeight: '600',
-    color: '#b5aacd',
+    marginTop: 8,
+    textAlign: 'center',
   },
-  balanceDisplay: {
-    color: '#4ade80',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 6,
-    marginLeft: 4,
+
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: C.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    padding: 5,
+    gap: 5,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 16,
-    marginBottom: 6,
-    color: GOLD,
-    letterSpacing: 0.5,
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: 'center',
   },
-  input: {
+  segmentBtnOn: {backgroundColor: GOLD},
+  segmentText: {color: C.muted, fontSize: 13, fontWeight: '700'},
+  segmentTextOn: {color: C.bg, fontWeight: '800'},
+
+  inputShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.surface,
+    borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#2c2440',
-    backgroundColor: '#161226',
-    color: '#fff',
+    borderColor: C.border,
+    paddingLeft: 16,
+    paddingRight: 8,
+  },
+  inputShellFocused: {borderColor: GOLD},
+  input: {flex: 1, color: C.text, fontSize: 14, paddingVertical: 15},
+  inputAction: {paddingHorizontal: 10, paddingVertical: 8},
+  inputActionClear: {color: C.muted, fontSize: 15, fontWeight: '700'},
+  pasteBtn: {
+    backgroundColor: C.raised,
+    borderRadius: 10,
+    paddingHorizontal: 13,
+  },
+  pasteBtnText: {color: GOLD, fontSize: 12, fontWeight: '800'},
+
+  miniBtn: {
+    backgroundColor: C.raised,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  miniBtnText: {color: GOLD, fontSize: 11, fontWeight: '800'},
+
+  balancePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 7,
+    marginTop: 10,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  balancePillText: {color: C.green, fontSize: 12, fontWeight: '800'},
+
+  mintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: 14,
   },
-  inputContainer: {
-    position: 'relative',
-    justifyContent: 'center',
+  mintValue: {
+    flex: 1,
+    color: C.muted,
+    fontSize: 11,
+    fontFamily: 'monospace',
   },
-  pasteBtn: {
-    position: 'absolute',
-    right: 10,
-    backgroundColor: '#2d2448',
+  lockChip: {
+    backgroundColor: C.raised,
+    borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingVertical: 4,
   },
-  pasteBtnText: {
-    color: GOLD,
-    fontSize: 12,
-    fontWeight: '700',
+  lockChipText: {color: C.muted, fontSize: 9, fontWeight: '800'},
+  warnChip: {
+    backgroundColor: '#3a2a12',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  clearBtn: {
-    position: 'absolute',
-    right: 12,
-    padding: 6,
-  },
-  clearBtnText: {
-    color: '#9a8db5',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  button: {
+  warnChipText: {color: '#f0a03c', fontSize: 9, fontWeight: '800'},
+
+  primaryBtn: {
     backgroundColor: GOLD,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 16,
+    paddingVertical: 17,
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 22,
   },
-  buttonAlt: {
-    borderColor: GOLD,
-    borderWidth: 1.5,
+  primaryBtnText: {
+    color: C.bg,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  secondaryBtn: {
+    backgroundColor: C.raised,
     borderRadius: 14,
-    padding: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingVertical: 15,
     alignItems: 'center',
     marginTop: 10,
   },
-  buttonText: {color: '#0d0b14', fontWeight: '800', fontSize: 15},
-  buttonAltText: {color: GOLD, fontWeight: '700', fontSize: 15},
-  lockedField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: GOLD,
-    backgroundColor: '#161226',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  lockedText: {flex: 1, color: GOLD, fontSize: 13, fontWeight: '600'},
-  lockedBadge: {color: '#9a8db5', fontSize: 11, fontWeight: '700', marginLeft: 8},
-  result: {alignItems: 'stretch', marginTop: 20},
+  secondaryBtnText: {color: GOLD, fontSize: 13, fontWeight: '800'},
+
+  result: {marginTop: 22},
   qrCard: {
-    backgroundColor: '#0d0b14',
+    backgroundColor: C.bg,
     alignItems: 'center',
     padding: 24,
-    borderRadius: 20,
+    borderRadius: 24,
     borderWidth: 1.5,
     borderColor: GOLD,
   },
-  seg: {
-    flexDirection: 'row',
-    backgroundColor: '#161226',
-    borderWidth: 1.5,
-    borderColor: '#2c2440',
-    borderRadius: 14,
-    padding: 5,
+  cardHeader: {flexDirection: 'row', alignItems: 'center', gap: 8},
+  cardLogo: {width: 30, height: 30, borderRadius: 15},
+  cardBrand: {
+    color: GOLD,
+    fontSize: 21,
+    fontWeight: '900',
+    letterSpacing: 3,
   },
-  segBtn: {flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: 'center'},
-  segBtnOn: {backgroundColor: GOLD},
-  segText: {color: '#9a8db5', fontSize: 14, fontWeight: '700'},
-  segTextOn: {color: '#0d0b14'},
-  cardHeader: {flexDirection: 'row', alignItems: 'center', marginBottom: 8},
   assoc: {
-    color: '#fff',
+    color: C.text,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 1,
+    marginTop: 10,
     marginBottom: 3,
   },
   motto: {
-    color: GOLD,
-    fontSize: 11,
+    color: C.muted,
+    fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1,
     marginBottom: 16,
   },
-  cardLogo: {width: 36, height: 36, borderRadius: 18, marginRight: 10},
-  cardBrand: {
-    color: GOLD,
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: 4,
+  qrBox: {
+    backgroundColor: '#ffffff',
+    padding: 14,
+    borderRadius: 18,
   },
-  qrBox: {backgroundColor: '#fff', borderRadius: 16, padding: 14},
-  owner: {marginTop: 14, fontSize: 18, fontWeight: '800', color: '#fff'},
+  owner: {
+    marginTop: 16,
+    fontSize: 19,
+    fontWeight: '900',
+    color: C.text,
+    letterSpacing: 0.3,
+  },
   badge: {
     marginTop: 10,
     backgroundColor: GOLD,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 15,
+    paddingVertical: 7,
   },
-  badgeText: {color: '#0d0b14', fontSize: 12, fontWeight: '800'},
+  badgeText: {color: C.bg, fontSize: 12, fontWeight: '800'},
   cardMessage: {
-    marginTop: 12,
-    color: '#b5aacd',
+    marginTop: 13,
+    color: C.muted,
     fontSize: 11,
     lineHeight: 16,
     textAlign: 'center',
+  },
+
+  manualBox: {
+    marginTop: 16,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    backgroundColor: C.surface,
+    borderWidth: 1.5,
+    borderColor: GOLD,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  manualTitle: {
+    color: GOLD,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  manualToken: {
+    color: C.text,
+    fontSize: 21,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginTop: 3,
+  },
+  manualMint: {
+    color: C.muted,
+    fontSize: 8.5,
+    marginTop: 4,
+    textAlign: 'center',
+    fontFamily: 'monospace',
+  },
+  manualAmount: {
+    color: GOLD,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 6,
   },
 });

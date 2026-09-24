@@ -4,7 +4,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Android 11+ hides other apps unless declared. Without this the handoff
-         to Phantom/Solflare fails even when a wallet is installed. -->
+         fails even when a wallet is installed. Jupiter, Phantom and Solflare
+         all register the solana: scheme, so this one entry covers them. -->
     <queries>
       <intent>
         <action android:name="android.intent.action.VIEW" />

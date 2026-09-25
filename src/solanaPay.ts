@@ -97,10 +97,11 @@ export function buildUrl({recipient, mint, label, amount}: PayFields): string {
 }
 
 // Which payload the QR carries. Solana Pay locks the token so the sender
-// cannot pick the wrong one, but only some wallets implement the spec
-// (Solflare and Phantom do; SafePal, Jupiter and others do not scan it at
-// all, or drop the spl-token field and default to SOL). 'universal' trades
-// the lock away for a bare address, which every Solana wallet can scan.
+// cannot pick the wrong one, but only some wallets implement the spec:
+// Phantom, Solflare and Jupiter register a solana: handler, while SafePal,
+// Trust, MetaMask and Bitget register none and read the QR text themselves.
+// 'universal' drops to a plain solana:<address>, which those scanners have a
+// chance of reading, at the cost of the token no longer being pinned.
 export type QrMode = 'solanapay' | 'universal';
 
 export const QR_MODES: Record<
@@ -119,10 +120,14 @@ export const QR_MODES: Record<
   },
 };
 
-// A universal QR is the bare recipient address and nothing else: a wallet that
-// does not understand Solana Pay still reads it as "send to this address".
-// The token and amount ride on the printed card instead of in the QR, so the
-// card MUST keep showing them.
+// A universal QR is the bare recipient address and nothing else.
+//
+// It carried a 'solana:' prefix for exactly one release. The prefix is the
+// correct way to name the chain, but SafePal's scanner does not parse it and
+// fell back to offering the raw text as a copy, which broke the flow that had
+// been working. Multi-chain scanners want a naked address, so that is what
+// they get; the chain is named on the printed card instead, which is the only
+// place it can go without breaking the scan.
 export function buildQrValue(mode: QrMode, fields: PayFields): string {
   if (!isBase58Address(fields.recipient)) {
     throw new Error('Invalid wallet address');
@@ -183,7 +188,9 @@ export type CardCheck =
 export function checkCard(raw: string): CardCheck {
   const fields = parseUrl(raw);
   if (!fields) {
-    const bare = raw.trim();
+    // A 'universal' QR. The solana: prefix is still stripped because cards
+    // printed during the one release that emitted it are in people's hands.
+    const bare = raw.trim().replace(/^solana:/i, '');
     if (isBase58Address(bare)) {
       return {
         status: 'address',

@@ -32,7 +32,7 @@ const TX_HISTORY_LIMIT = 50;
 const TX_FILTERS: {key: TxFilter; label: string}[] = [
   {key: 'all', label: 'All'},
   {key: 'in', label: '↓ Received'},
-  {key: 'out', label: '↑ Sent'},
+  {key: 'out', label: 'Sent'},
 ];
 
 

@@ -395,6 +395,20 @@ export default function GenerateScreen({
                     Amount: {amount.trim()} PIPRO
                   </Text>
                 )}
+
+                {/* Wallets that cannot read the QR only offer to copy its raw
+                    text, which carries the solana: prefix their address field
+                    rejects. Printing the address plainly is the way out of
+                    that: it can be read, typed or checked against a paste. */}
+                <View style={styles.manualDivider} />
+                <Text style={styles.manualTitle}>NETWORK</Text>
+                <Text style={styles.manualNetwork}>SOLANA</Text>
+
+                <View style={styles.manualDivider} />
+                <Text style={styles.manualTitle}>TO THIS WALLET</Text>
+                <Text style={styles.manualAddress} selectable>
+                  {wallet.trim()}
+                </Text>
               </View>
             )}
 
@@ -677,5 +691,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     marginTop: 6,
+  },
+  manualDivider: {
+    alignSelf: 'stretch',
+    height: 1,
+    backgroundColor: C.border,
+    marginVertical: 10,
+  },
+  manualNetwork: {
+    color: C.text,
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginTop: 2,
+  },
+  manualAddress: {
+    color: C.text,
+    fontSize: 10,
+    fontFamily: 'monospace',
+    textAlign: 'center',
+    marginTop: 3,
+    letterSpacing: 0.3,
   },
 });

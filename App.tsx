@@ -16,6 +16,8 @@ import BalanceScreen from './src/BalanceScreen';
 import AdBanner from './src/components/AdBanner';
 import mobileAds from 'react-native-google-mobile-ads';
 import { parseDeepLink, DeepLink } from './src/solanaPay';
+import { HotUpdater } from '@hot-updater/react-native';
+import { OTA_BASE_URL } from './src/otaConfig';
 
 const logo = require('./src/assets/pipro-logo.png');
 
@@ -226,4 +228,15 @@ const styles = StyleSheet.create({
   headerLogo: { width: 32, height: 32, borderRadius: 16 },
 });
 
-export default App;
+// OTA updates. No fallbackComponent on purpose: the bundle downloads quietly
+// in the background and the new version is live on the next cold start, so an
+// update can never interrupt someone mid-scan or mid-payment.
+//
+// 'fingerprint' over 'appVersion': it hashes the native dependencies, so a JS
+// bundle is only ever delivered to a binary that can actually run it. Adding
+// or upgrading a native library changes the hash and old installs simply stop
+// matching, instead of being handed JS that crashes them.
+export default HotUpdater.wrap({
+  baseURL: OTA_BASE_URL,
+  updateStrategy: 'fingerprint',
+})(App);

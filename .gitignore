@@ -77,3 +77,11 @@ yarn-error.log
 # The website is its own repo (deploys to GitHub Pages) - see web/README.md
 web/
 
+
+# Hot Updater OTA — Cloudflare credentials. Never commit these: the API token
+# can publish a JS bundle to every installed copy of the app.
+.env.hotupdater
+.env.hotupdater.*
+# hot-updater
+.hot-updater/output
+.hot-updater/log

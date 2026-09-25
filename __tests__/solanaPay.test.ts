@@ -313,8 +313,19 @@ describe('buildQrValue', () => {
     expect(v).toContain('amount=25');
   });
 
-  it('emits a bare address in universal mode so any wallet can read it', () => {
+  it('emits a naked address in universal mode, which is what scanners want', () => {
+    // No solana: prefix: SafePal's scanner does not parse it and drops to
+    // offering the raw text as a copy. The chain is named on the card instead.
     expect(buildQrValue('universal', fields)).toBe(WALLET);
+    expect(buildQrValue('universal', fields)).not.toContain('spl-token');
+  });
+
+  it('still reads the prefixed form printed by the one release that used it', () => {
+    const prefixed = checkCard('solana:' + WALLET);
+    expect(prefixed.status).toBe('address');
+    if (prefixed.status === 'address') {
+      expect(prefixed.fields.recipient).toBe(WALLET);
+    }
   });
 
   it('rejects a bad address in either mode', () => {
